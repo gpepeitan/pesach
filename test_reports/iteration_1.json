@@ -1,0 +1,49 @@
+{
+  "summary": "Full backend + frontend testing for Passover Seating Manager Phase 2. Backend: 39/39 pytest cases passed across auth, guest intake (incl. duplicates), filters/search/sort/stats, staff notes, preferences (mutual/one-way/unresolved + resolve), activity log, and admin staff management. Frontend: all critical flows verified — intake form submission, duplicate warning on intake + confirmation, staff login + JWT in localStorage, dashboard stats bar + 5 tabs, guest search/filters/drawer/staff notes, unassigned queue, preferences subtabs, activity log entries, staff admin CRUD, non-admin tab gating, logout. Fixed one critical React bug (useEffect returning Promise) in Dashboard.jsx that was producing 'destroy is not a function' runtime error overlays.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional, low priority) Initial stats bar shows 0/0/0 briefly on dashboard mount before the first poll completes; consider showing a skeleton or loading state instead of 0 values to avoid misleading UI.",
+    "(Optional) Wrap apiClient.get/apiClient.post calls in error states for ActivityLog (currently silently swallows failures — only relies on auto-bearer interceptor).",
+    "(Optional) The /api/preferences/unresolved endpoint loads all guests into memory for fuzzy matching on every call. Fine at MVP scale but should be paginated/cached for large guest lists."
+  ],
+  "critical_code_review_comments": [
+    "FIXED: Dashboard.jsx lines 210 and 316 used `useEffect(load, [deps])` where `load` is async — this returns a Promise as the cleanup function and crashes React with 'destroy is not a function'. Replaced with `useEffect(() => { load(); }, [deps])`. Without this fix, the dashboard error overlay appeared on tab navigation and broke the StaffAdmin component lifecycle.",
+    "CORS configured with allow_origins=['*'] and allow_credentials=False — acceptable since auth is Bearer-token-based (not cookies). Good choice.",
+    "JWT secret loaded from env (good). Token expiry 12h — reasonable for staff dashboard.",
+    "bcrypt is used correctly via bcrypt.hashpw/checkpw (not crypt). Password hashes stored, never returned.",
+    "Activity log captures login/logout/note_add/note_delete/guest_update/preference_resolve/staff_create/staff_update — all verified in pytest. Good audit trail coverage.",
+    "Pydantic input validation present on all write endpoints (GuestInput, LoginInput, StaffCreateInput, StaffUpdateInput, StaffNoteInput, PreferenceResolveInput, GuestUpdateInput).",
+    "MongoDB _id concern N/A — backend uses Postgres via SQLAlchemy, no ObjectId serialization issues.",
+    "server.py is 545 lines, approaching the 700-line threshold. Consider splitting into routers/auth.py, routers/guests.py, routers/preferences.py, routers/staff.py if it grows further.",
+    "Frontend Dashboard.jsx is 407 lines and contains 5+ components — fine for MVP but consider splitting per-tab components into their own files for maintainability.",
+    "Good use of data-testid throughout — every interactive element is testable."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/Dashboard.jsx (fixed 2 useEffect-returning-Promise bugs)",
+    "/app/backend/tests/conftest.py (new — pytest fixtures)",
+    "/app/backend/tests/test_backend.py (new — 39 backend tests)"
+  ],
+  "success_rate": {
+    "backend": "100% (39/39 pytest)",
+    "frontend": "100% (all critical flows passing after Dashboard.jsx fix)"
+  },
+  "test_credentials": "Admin: Eitanp / Gpepeitan!23 (display: 'eitan prigan'). Test-created non-admin staff users prefixed TEST_/TESTui (left in DB; deactivated TESTui staff cannot login).",
+  "seed_data_creation": "Created multiple TEST-INV-* invoice guest records and 2 TEST staff users via tests. Not cleaned up — invoice numbers are unique-timestamped so no collisions on re-run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test suite is comprehensive at /app/backend/tests/test_backend.py — run with `pytest /app/backend/tests/ -v --tb=short` from /app. Admin seed runs on every startup (and refreshes password if changed). The frontend duplicate-invoice debounce is ~500ms, give it 1.5–2s in Playwright. Preferences tab subtab testids are: pref-tab-unresolved, pref-tab-mutual, pref-tab-one-way (note the hyphen in one-way). Stats bar shows 0s briefly before the first poll completes.",
+  "rca of the issue": "Single bug found and fixed: Dashboard.jsx had `useEffect(load, [...])` where `load` was defined as `async () => ...`. React calls the function and treats its return value as the cleanup function. An async function returns a Promise, so React tries to invoke promise.destroy() during cleanup → TypeError: 'destroy is not a function'. This produced visible red error overlays in dev mode and broke unmounting of StaffAdmin (and the Preferences tab when switching tabs). Fix: wrap the call: `useEffect(() => { load(); }, [...])`. Verified clean (0 runtime errors) on follow-up Playwright run."
+}
