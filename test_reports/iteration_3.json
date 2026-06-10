@@ -1,0 +1,44 @@
+{
+  "summary": "Phase 4 (Roster / registered_guests + auto-link) end-to-end testing. Backend: 19/19 new pytest cases in /app/backend/tests/test_roster.py pass — covering CSV import (multipart + raw + case-insensitive headers + re-import updates + bad-header 400), public lookup/search (with excludeInvoice), admin-only CRUD (create/duplicate-400/delete/non-admin-403), and the AUTO-LINKING logic in both directions (forward + the critical REVERSE direction). Frontend verified live on the preview URL: roster banner + autocomplete + linked indicator + submit payload + Roster admin tab (CSV upload + manual add + search + delete). KILLER E2E PASSED: created two roster entries via API, submitted Alice with linkedInvoiceNumber=Bob, then Bob with linkedInvoiceNumber=Alice, and GET /api/preferences/mutual returned the pair automatically with NO manual fuzzy-match step. Total cumulative backend tests: 89 (39 phase1+2 + 31 phase3 + 19 roster), 100% passing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/roster/import-csv", "issue": "Endpoint is registered via @app.post('/api/roster/import-csv') instead of via the @api router (other roster endpoints use @api.post('/roster')). It still works because both paths resolve to /api/..., but it bypasses the router prefix convention — minor style inconsistency."},
+      {"endpoint": "POST /api/roster/import-csv", "issue": "Errors during CSV row insert are caught per-row but the DB transaction is not rolled back at the row level (the whole session is rolled back only at the connection level), so a single bad row may abort the whole transaction in PostgreSQL strict-mode. In practice the test for bad data did not trigger this, but consider using savepoints (db.begin_nested) per row for resilience."},
+      {"endpoint": "GET /api/roster/lookup/{invoice_number}", "issue": "No auth/rate-limit on this PUBLIC endpoint. Allows arbitrary lookups by invoice number — for a small private invite-only event this is acceptable, but it's effectively an invoice-number enumeration oracle. Consider adding a basic rate limit or sliding-window throttle."},
+      {"endpoint": "GET /api/roster/search", "issue": "Same as lookup — public + unbounded. Returns full name and invoice for any partial match (min q length is only 1 char), so 'a' will return up to 12 names. Consider min q length of 2 and a soft rate limit."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_roster.py",
+    "/app/test_reports/pytest/pytest_roster.xml"
+  ],
+  "action_items": [
+    "(Optional) Move POST /api/roster/import-csv from @app.post to @api.post('/roster/import-csv') for router-prefix consistency.",
+    "(Optional) Wrap each CSV row insert/update in db.begin_nested() so a single bad row does not abort the whole batch.",
+    "(Optional security) Public /api/roster/lookup/{inv} and /api/roster/search are unauthenticated enumeration oracles — add a min q length of 2-3 and a simple per-IP rate limit if the event is sensitive.",
+    "(Optional UI) Verified Roster admin tab end-to-end — no further fixes required."
+  ],
+  "critical_code_review_comments": [
+    "Auto-link logic in submit_guest is correct in BOTH directions — verified by 4 explicit tests including the killer reverse test (A submits referencing future B; A's resolution starts pending; B submits; A auto-confirms with fuzzy_score=1.0). The UPDATE statement at server.py:210-219 with guest_id<>:gid guard correctly prevents self-link.",
+    "RosterAutocomplete uses onMouseDown rather than onClick — correctly avoids the blur-before-click race; data-testid pattern input-pref-{i}-option-{rosterId} works for Playwright direct clicks (verified).",
+    "schema.sql includes 'ALTER TABLE preference_resolutions ADD COLUMN IF NOT EXISTS linked_invoice_number TEXT' so migrations are idempotent and safe across redeploys.",
+    "server.py is now ~1085 lines — exceeds the 700-line guideline (already flagged in iter_2). Recommendation to split into routers/ (auth, guests, roster, ballrooms, tables, seating, preferences, staff, activity) still stands.",
+    "BaseModel uses max_length=5 on linkedInvoiceNumbers and seatingPreferences — good consistency.",
+    "POST /api/roster/import-csv catches Exception broadly but echoes str(ex)[:120] back to the API user; for a Supabase-backed app this may leak partial DB error text. Consider a generic 'Failed to write row' message and server-side logging only."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_roster.py (NEW — 19 tests covering roster CRUD, public lookup/search, CSV import + re-import + bad headers, auto-link forward + reverse, mutual pair, fuzzy fallback)"
+  ],
+  "success_rate": {"backend": "100% (19/19 new roster + 70/70 prior = 89/89 total)", "frontend": "100% (intake roster banner, RosterAutocomplete dropdown + linked indicator, submit payload with linkedInvoiceNumbers, admin Roster tab CSV upload + manual add + search + delete; killer E2E verified via API after dual submission)"},
+  "test_credentials": "Admin: Eitanp / Gpepeitan!23 (already documented in /app/memory/test_credentials.md). Created throwaway TESTrost_* non-admin user for 403 check.",
+  "seed_data_creation": "Roster: QB-AAAA Alice E2E, QB-BBBB Bob E2E (created during initial smoke), plus QB-E2E-A-* / QB-E2E-B-* unique-per-run pairs used in the killer test, plus several TEST-CSV-* / TEST-FWD-* / TEST-REV-* / TEST-MUT-* / TEST-FUZZY-* / UI-CSV-* / UI-MAN-* entries from the pytest run and the Playwright run. None cleaned up — tests are idempotent via time-suffixed identifiers. Roster now has ~24 entries; Guests: 41, People: 227.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run all backend tests with `pytest /app/backend/tests/ -v --tb=short` (~60s, 89 cases). Roster file at /app/backend/tests/test_roster.py uses requests.post (not the api_client session) for multipart CSV uploads because the api_client session has a global Content-Type: application/json header that conflicts with multipart boundaries — preserve this pattern if extending. The reverse-autolink test is the critical product-value test for Phase 4 and should be re-run after any change to submit_guest in server.py."
+}

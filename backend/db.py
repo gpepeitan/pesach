@@ -104,10 +104,24 @@ CREATE TABLE IF NOT EXISTS preference_resolutions (
   resolved_guest_id INTEGER REFERENCES guests(id) ON DELETE SET NULL,
   fuzzy_score NUMERIC(5,4),
   resolved_at TIMESTAMPTZ,
+  linked_invoice_number TEXT,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+ALTER TABLE preference_resolutions ADD COLUMN IF NOT EXISTS linked_invoice_number TEXT;
 CREATE INDEX IF NOT EXISTS idx_pref_res_guest ON preference_resolutions(guest_id);
 CREATE INDEX IF NOT EXISTS idx_pref_res_status ON preference_resolutions(resolution_status);
+CREATE INDEX IF NOT EXISTS idx_pref_res_linked_inv ON preference_resolutions(linked_invoice_number);
+
+CREATE TABLE IF NOT EXISTS registered_guests (
+  id SERIAL PRIMARY KEY,
+  invoice_number TEXT NOT NULL UNIQUE,
+  full_name TEXT NOT NULL,
+  email TEXT,
+  phone TEXT,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_registered_name ON registered_guests(full_name);
 
 CREATE TABLE IF NOT EXISTS seat_assignments (
   id SERIAL PRIMARY KEY,

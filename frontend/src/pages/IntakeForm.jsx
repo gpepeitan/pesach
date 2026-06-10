@@ -1,34 +1,65 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Trash2, Loader2, Info, CheckCircle2, User, FileText, Users, MapPin, Baby, AlertCircle } from "lucide-react";
+import { Plus, Trash2, Loader2, Info, CheckCircle2, User, FileText, Users, MapPin, Baby, AlertCircle, Sparkles } from "lucide-react";
 import { apiClient } from "@/lib/api";
+import RosterAutocomplete from "@/components/RosterAutocomplete";
 
 export function IntakeForm() {
   const nav = useNavigate();
   const [form, setForm] = useState({
     fullName: "", invoiceNumber: "", partySize: 1,
-    seatingPreferences: [], highChairNeeded: false, highChairCount: 0, specialNotes: "",
+    seatingPreferences: [], linkedInvoiceNumbers: [],
+    highChairNeeded: false, highChairCount: 0, specialNotes: "",
   });
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [invoiceCheck, setInvoiceCheck] = useState(null);
+  const [rosterMatch, setRosterMatch] = useState(null);
 
   useEffect(() => {
-    if (!form.invoiceNumber || form.invoiceNumber.length < 3) { setInvoiceCheck(null); return; }
+    if (!form.invoiceNumber || form.invoiceNumber.length < 3) { setInvoiceCheck(null); setRosterMatch(null); return; }
     const t = setTimeout(() => {
-      apiClient.get(`/guests/check-invoice/${encodeURIComponent(form.invoiceNumber)}`)
-        .then(r => setInvoiceCheck(r.data)).catch(() => setInvoiceCheck(null));
-    }, 500);
+      Promise.all([
+        apiClient.get(`/guests/check-invoice/${encodeURIComponent(form.invoiceNumber)}`),
+        apiClient.get(`/roster/lookup/${encodeURIComponent(form.invoiceNumber)}`),
+      ]).then(([dup, rg]) => {
+        setInvoiceCheck(dup.data);
+        setRosterMatch(rg.data.found ? rg.data : null);
+      }).catch(() => {});
+    }, 400);
     return () => clearTimeout(t);
   }, [form.invoiceNumber]);
 
   const update = (k, v) => setForm(s => ({ ...s, [k]: v }));
-  const addPref = () => form.seatingPreferences.length < 5 &&
-    update("seatingPreferences", [...form.seatingPreferences, ""]);
-  const setPref = (i, v) => {
-    const arr = [...form.seatingPreferences]; arr[i] = v; update("seatingPreferences", arr);
+
+  const addPref = () => {
+    if (form.seatingPreferences.length >= 5) return;
+    setForm(s => ({ ...s,
+      seatingPreferences: [...s.seatingPreferences, ""],
+      linkedInvoiceNumbers: [...s.linkedInvoiceNumbers, ""] }));
   };
-  const rmPref = (i) => update("seatingPreferences", form.seatingPreferences.filter((_, idx) => idx !== i));
+
+  const setPref = (i, v) => {
+    const arr = [...form.seatingPreferences]; arr[i] = v;
+    const links = [...form.linkedInvoiceNumbers]; links[i] = "";
+    setForm(s => ({ ...s, seatingPreferences: arr, linkedInvoiceNumbers: links }));
+  };
+
+  const pickPref = (i, picked) => {
+    const arr = [...form.seatingPreferences]; arr[i] = picked.fullName;
+    const links = [...form.linkedInvoiceNumbers]; links[i] = picked.invoiceNumber || "";
+    setForm(s => ({ ...s, seatingPreferences: arr, linkedInvoiceNumbers: links }));
+  };
+
+  const rmPref = (i) => {
+    setForm(s => ({
+      ...s,
+      seatingPreferences: s.seatingPreferences.filter((_, idx) => idx !== i),
+      linkedInvoiceNumbers: s.linkedInvoiceNumbers.filter((_, idx) => idx !== i),
+    }));
+  };
+
+  const useRosterName = () => { if (rosterMatch) update("fullName", rosterMatch.fullName); };
 
   const validate = () => {
     const e = {};
@@ -45,12 +76,23 @@ export function IntakeForm() {
     if (!validate()) return;
     setSubmitting(true);
     try {
+      const cleanPrefs = []; const cleanLinks = [];
+      form.seatingPreferences.forEach((p, i) => {
+        const trimmed = (p || "").trim();
+        if (trimmed) {
+          cleanPrefs.push(trimmed);
+          cleanLinks.push((form.linkedInvoiceNumbers[i] || "").trim());
+        }
+      });
       const payload = {
-        ...form,
-        seatingPreferences: form.seatingPreferences.map(p => p.trim()).filter(Boolean),
-        specialNotes: form.specialNotes.trim() || null,
-        highChairCount: form.highChairNeeded ? Number(form.highChairCount) : 0,
+        fullName: form.fullName.trim(),
+        invoiceNumber: form.invoiceNumber.trim(),
         partySize: Number(form.partySize),
+        seatingPreferences: cleanPrefs,
+        linkedInvoiceNumbers: cleanLinks,
+        specialNotes: form.specialNotes.trim() || null,
+        highChairNeeded: form.highChairNeeded,
+        highChairCount: form.highChairNeeded ? Number(form.highChairCount) : 0,
       };
       const { data } = await apiClient.post("/guests", payload);
       const q = new URLSearchParams({
@@ -78,12 +120,6 @@ export function IntakeForm() {
             <p className="text-stone-600 mt-1">We're excited to host you. Let's get your table ready.</p>
           </div>
           <div className="p-6 space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-stone-700 mb-2">Primary Guest Name</label>
-              <input data-testid="input-fullname" value={form.fullName} onChange={e => update("fullName", e.target.value)} placeholder="Cohen Family"
-                className="w-full px-4 py-3 border border-stone-300 rounded-lg focus:ring-2 focus:ring-stone-900 focus:border-stone-900 text-lg" />
-              {errors.fullName && <p className="text-red-600 text-sm mt-1">{errors.fullName}</p>}
-            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-stone-700 mb-2">Invoice Number</label>
@@ -99,6 +135,24 @@ export function IntakeForm() {
                 <p className="text-stone-500 text-xs mt-1">Total guests including children</p>
               </div>
             </div>
+            {rosterMatch && (
+              <div className="bg-emerald-50 border border-emerald-300 rounded-lg p-3 flex items-center justify-between gap-3 text-emerald-900 text-sm" data-testid="roster-match-banner">
+                <div className="flex gap-2 items-center">
+                  <Sparkles className="h-4 w-4 shrink-0" />
+                  <span>We found your booking: <strong>{rosterMatch.fullName}</strong></span>
+                </div>
+                {form.fullName !== rosterMatch.fullName && (
+                  <button type="button" onClick={useRosterName} data-testid="use-roster-name"
+                    className="text-xs px-3 py-1 bg-emerald-700 hover:bg-emerald-800 text-white rounded shrink-0">Use this name</button>
+                )}
+              </div>
+            )}
+            <div>
+              <label className="block text-sm font-medium text-stone-700 mb-2">Primary Guest Name</label>
+              <input data-testid="input-fullname" value={form.fullName} onChange={e => update("fullName", e.target.value)} placeholder="Cohen Family"
+                className="w-full px-4 py-3 border border-stone-300 rounded-lg focus:ring-2 focus:ring-stone-900 text-lg" />
+              {errors.fullName && <p className="text-red-600 text-sm mt-1">{errors.fullName}</p>}
+            </div>
             {invoiceCheck?.hasSubmissions && (
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex gap-2 text-amber-900 text-sm">
                 <Info className="h-4 w-4 mt-0.5 shrink-0" />
@@ -107,12 +161,21 @@ export function IntakeForm() {
             )}
             <div className="border-t border-stone-200 pt-6">
               <h3 className="text-lg font-medium text-stone-900">Seating Preferences (Optional)</h3>
-              <p className="text-sm text-stone-600 mb-4">Are there specific families you would like to be seated with?</p>
+              <p className="text-sm text-stone-600 mb-4">Start typing a family name — we'll suggest matches from the program.</p>
               <div className="space-y-2">
                 {form.seatingPreferences.map((p, i) => (
                   <div key={i} className="flex gap-2">
-                    <input data-testid={`input-pref-${i}`} value={p} onChange={e => setPref(i, e.target.value)} placeholder="e.g. Schwartz Family"
-                      className="flex-1 px-4 py-2.5 border border-stone-300 rounded-lg focus:ring-2 focus:ring-stone-900" />
+                    <div className="flex-1">
+                      <RosterAutocomplete
+                        value={p}
+                        onChange={(v) => setPref(i, v)}
+                        onPick={(picked) => pickPref(i, picked)}
+                        excludeInvoice={form.invoiceNumber}
+                        placeholder="e.g. Schwartz Family"
+                        testId={`input-pref-${i}`}
+                        linkedInvoice={form.linkedInvoiceNumbers[i]}
+                      />
+                    </div>
                     <button data-testid={`button-remove-pref-${i}`} type="button" onClick={() => rmPref(i)}
                       className="p-2 text-stone-500 hover:text-red-600"><Trash2 className="h-5 w-5" /></button>
                   </div>

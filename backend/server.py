@@ -95,6 +95,8 @@ class GuestInput(BaseModel):
     invoiceNumber: str = Field(min_length=1)
     partySize: int = Field(ge=1)
     seatingPreferences: List[str] = Field(default_factory=list, max_length=5)
+    # Optional parallel list of linked roster invoice numbers (one per preference, "" if not picked from autocomplete)
+    linkedInvoiceNumbers: List[str] = Field(default_factory=list, max_length=5)
     highChairNeeded: bool = False
     highChairCount: int = 0
     specialNotes: Optional[str] = None
@@ -172,6 +174,9 @@ async def submit_guest(body: GuestInput, db: AsyncSession = Depends(get_db)):
     is_dup = len(existing) > 0
 
     prefs = [p for p in (body.seatingPreferences or []) if p.strip()]
+    linked = list(body.linkedInvoiceNumbers or [])
+    while len(linked) < len(prefs): linked.append("")
+
     res = (await db.execute(text("""
         INSERT INTO guests (full_name, invoice_number, party_size, seating_preferences,
                             high_chair_needed, high_chair_count, special_notes, is_duplicate)
@@ -183,10 +188,35 @@ async def submit_guest(body: GuestInput, db: AsyncSession = Depends(get_db)):
             "sn": body.specialNotes, "dup": is_dup})).mappings().first()
 
     for idx, name in enumerate(prefs):
+        link_inv = (linked[idx] or "").strip() or None
+        # if linked to a roster invoice, see if that guest has already submitted — auto-confirm
+        resolved_gid = None; status = "pending"; score = None
+        if link_inv:
+            other = (await db.execute(text(
+                "SELECT id FROM guests WHERE invoice_number=:i AND id<>:self ORDER BY submission_timestamp ASC LIMIT 1"
+            ), {"i": link_inv, "self": res["id"]})).mappings().first()
+            if other:
+                resolved_gid = other["id"]; status = "confirmed"; score = 1.0
         await db.execute(text("""
-            INSERT INTO preference_resolutions (guest_id, preference_index, preference_name)
-            VALUES (:g, :i, :n)
-        """), {"g": res["id"], "i": idx, "n": name})
+            INSERT INTO preference_resolutions (guest_id, preference_index, preference_name,
+                linked_invoice_number, resolved_guest_id, resolution_status, fuzzy_score, resolved_at)
+            VALUES (:g, :i, :n, :li, :rg, CAST(:s AS preference_resolution_status), :sc,
+                    CASE WHEN :s='confirmed' THEN NOW() ELSE NULL END)
+        """), {"g": res["id"], "i": idx, "n": name, "li": link_inv,
+               "rg": resolved_gid, "s": status, "sc": score})
+
+    # Auto-link: any pending pref_resolutions whose linked_invoice_number = this new guest's invoice
+    # should now be confirmed pointing at this new guest
+    await db.execute(text("""
+        UPDATE preference_resolutions
+        SET resolved_guest_id=:gid,
+            resolution_status='confirmed',
+            fuzzy_score=1.0,
+            resolved_at=NOW()
+        WHERE linked_invoice_number=:inv
+          AND resolution_status='pending'
+          AND guest_id<>:gid
+    """), {"gid": res["id"], "inv": body.invoiceNumber})
 
     await db.commit()
     return {"guest": guest_to_api(res), "isDuplicate": is_dup, "priorSubmissionCount": len(existing)}
@@ -198,6 +228,164 @@ async def check_invoice(invoice_number: str, db: AsyncSession = Depends(get_db))
         text("SELECT id FROM guests WHERE invoice_number=:i"), {"i": invoice_number},
     )).fetchall()
     return {"invoiceNumber": invoice_number, "hasSubmissions": len(rows) > 0, "submissionCount": len(rows)}
+
+
+# ---------- REGISTERED GUESTS (master roster) ----------
+class RegisteredGuestInput(BaseModel):
+    invoiceNumber: str = Field(min_length=1)
+    fullName: str = Field(min_length=1)
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    notes: Optional[str] = None
+
+
+def rg_to_api(r) -> dict:
+    return {"id": r["id"], "invoiceNumber": r["invoice_number"], "fullName": r["full_name"],
+            "email": r["email"], "phone": r["phone"], "notes": r["notes"],
+            "createdAt": r["created_at"].isoformat()}
+
+
+@api.get("/roster/lookup/{invoice_number}")
+async def roster_lookup(invoice_number: str, db: AsyncSession = Depends(get_db)):
+    """Public — used by intake form to auto-fill name when an invoice number is entered."""
+    r = (await db.execute(text(
+        "SELECT * FROM registered_guests WHERE invoice_number=:i"
+    ), {"i": invoice_number.strip()})).mappings().first()
+    if not r:
+        return {"found": False}
+    return {"found": True, "fullName": r["full_name"], "invoiceNumber": r["invoice_number"]}
+
+
+@api.get("/roster/search")
+async def roster_search(q: str = "", excludeInvoice: Optional[str] = None, db: AsyncSession = Depends(get_db)):
+    """Public — used by intake form's seating-preference autocomplete."""
+    q = (q or "").strip()
+    if len(q) < 1:
+        return []
+    params = {"q": f"%{q}%", "limit": 12}
+    extra = ""
+    if excludeInvoice:
+        extra = "AND invoice_number<>:exc"
+        params["exc"] = excludeInvoice
+    rows = (await db.execute(text(f"""
+        SELECT id, invoice_number, full_name FROM registered_guests
+        WHERE (full_name ILIKE :q OR invoice_number ILIKE :q) {extra}
+        ORDER BY full_name ASC LIMIT :limit
+    """), params)).mappings().all()
+    return [{"id": r["id"], "invoiceNumber": r["invoice_number"], "fullName": r["full_name"]} for r in rows]
+
+
+@api.get("/roster")
+async def roster_list(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+                     search: Optional[str] = None):
+    where, params = "", {}
+    if search:
+        where = "WHERE full_name ILIKE :s OR invoice_number ILIKE :s"
+        params["s"] = f"%{search}%"
+    rows = (await db.execute(text(
+        f"SELECT * FROM registered_guests {where} ORDER BY full_name ASC LIMIT 2000"
+    ), params)).mappings().all()
+    return [rg_to_api(r) for r in rows]
+
+
+@api.post("/roster", status_code=201)
+async def roster_create(body: RegisteredGuestInput, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    try:
+        row = (await db.execute(text("""
+            INSERT INTO registered_guests (invoice_number, full_name, email, phone, notes)
+            VALUES (:i, :n, :e, :p, :nt) RETURNING *
+        """), {"i": body.invoiceNumber.strip(), "n": body.fullName.strip(),
+               "e": body.email, "p": body.phone, "nt": body.notes})).mappings().first()
+        await log_activity(db, user, "roster_create", details={"invoice": body.invoiceNumber})
+        await db.commit()
+        return rg_to_api(row)
+    except Exception as e:
+        await db.rollback()
+        if "duplicate" in str(e).lower():
+            raise HTTPException(400, "Invoice number already in roster")
+        raise HTTPException(400, str(e)[:200])
+
+
+@api.delete("/roster/{rg_id}", status_code=204)
+async def roster_delete(rg_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    await db.execute(text("DELETE FROM registered_guests WHERE id=:i"), {"i": rg_id})
+    await log_activity(db, user, "roster_delete", details={"id": rg_id})
+    await db.commit()
+
+
+@app.post("/api/roster/import-csv")
+async def roster_import_csv(
+    request: Request,
+    user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db),
+):
+    """Accepts multipart upload with a 'file' field, OR raw CSV body with text/csv content-type.
+    CSV columns (header row required, case-insensitive): invoice_number (or 'invoice'), full_name (or 'name').
+    Optional: email, phone, notes. Updates on conflict by invoice_number."""
+    import csv as _csv, io
+    from fastapi import UploadFile
+    ctype = (request.headers.get("content-type") or "").lower()
+    content = ""
+    if "multipart" in ctype:
+        form = await request.form()
+        f = form.get("file")
+        if f is None:
+            raise HTTPException(400, "Missing 'file' field")
+        content = (await f.read()).decode("utf-8-sig", errors="replace")
+    else:
+        content = (await request.body()).decode("utf-8-sig", errors="replace")
+
+    if not content.strip():
+        raise HTTPException(400, "Empty CSV body")
+
+    reader = _csv.DictReader(io.StringIO(content))
+    norm = lambda s: (s or "").strip().lower().replace(" ", "_")
+    if not reader.fieldnames:
+        raise HTTPException(400, "CSV missing header row")
+    field_map = {norm(f): f for f in reader.fieldnames}
+    inv_col = field_map.get("invoice_number") or field_map.get("invoice") or field_map.get("invoiceno") or field_map.get("invoice#")
+    name_col = field_map.get("full_name") or field_map.get("name") or field_map.get("guest_name") or field_map.get("customer")
+    if not inv_col or not name_col:
+        raise HTTPException(400, f"CSV must include an invoice and a name column. Detected headers: {list(reader.fieldnames)}")
+    email_col = field_map.get("email")
+    phone_col = field_map.get("phone") or field_map.get("phone_number")
+    notes_col = field_map.get("notes") or field_map.get("note")
+
+    inserted = updated = skipped = 0
+    errors = []
+    for i, row in enumerate(reader, start=2):
+        inv = (row.get(inv_col) or "").strip()
+        nm = (row.get(name_col) or "").strip()
+        if not inv or not nm:
+            skipped += 1; errors.append(f"Row {i}: missing invoice or name"); continue
+        try:
+            existing = (await db.execute(text(
+                "SELECT id FROM registered_guests WHERE invoice_number=:i"
+            ), {"i": inv})).fetchone()
+            if existing:
+                await db.execute(text("""
+                    UPDATE registered_guests SET full_name=:n,
+                        email=COALESCE(:e, email), phone=COALESCE(:p, phone), notes=COALESCE(:nt, notes)
+                    WHERE invoice_number=:i
+                """), {"i": inv, "n": nm,
+                       "e": row.get(email_col) if email_col else None,
+                       "p": row.get(phone_col) if phone_col else None,
+                       "nt": row.get(notes_col) if notes_col else None})
+                updated += 1
+            else:
+                await db.execute(text("""
+                    INSERT INTO registered_guests (invoice_number, full_name, email, phone, notes)
+                    VALUES (:i, :n, :e, :p, :nt)
+                """), {"i": inv, "n": nm,
+                       "e": row.get(email_col) if email_col else None,
+                       "p": row.get(phone_col) if phone_col else None,
+                       "nt": row.get(notes_col) if notes_col else None})
+                inserted += 1
+        except Exception as ex:
+            skipped += 1; errors.append(f"Row {i}: {str(ex)[:120]}")
+
+    await log_activity(db, user, "roster_import", details={"inserted": inserted, "updated": updated, "skipped": skipped})
+    await db.commit()
+    return {"inserted": inserted, "updated": updated, "skipped": skipped, "errors": errors[:20]}
 
 
 # ---------- AUTH ----------
