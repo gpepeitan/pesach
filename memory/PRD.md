@@ -27,7 +27,7 @@ Originally bootstrapped in Replit on Node/Express/Postgres/Drizzle. Ported to Em
 - Every staff write action logged with staff_member_name + timestamp.
 - Multiple admins, no cap.
 
-## Implemented (Phase 1 + Phase 2 + Phase 3 — 2026-01)
+## Implemented (Phase 1 + Phase 2 + Phase 3 + Roster — 2026-01)
 ### Backend (`/app/backend/server.py`, `db.py`)
 - Auto-creates full Postgres schema on startup (Phase 1 + 2 + forward-compat tables for Phase 3-5)
 - Auto-seeds admin user (Eitanp) on startup
@@ -43,23 +43,29 @@ Originally bootstrapped in Replit on Node/Express/Postgres/Drizzle. Ported to Em
   - Tables: `GET/POST/PATCH/DELETE /api/tables` (filter by `ballroomId`), `GET /api/tables/{id}` (with seated guests)
   - Assignment: `POST /api/tables/{id}/assign` (with capacity check, `allowOverflow` override, preference-match metadata), `POST /api/tables/{id}/unassign/{guestId}`, `PATCH /api/tables/{id}/guests/{guestId}/seated`
   - Auto-suggest: `POST /api/seating/auto-suggest` (returns plan, no writes), `POST /api/seating/auto-suggest/apply` (applies the reviewed plan)
+- **Roster additions (master booking list from QuickBooks):**
+  - Public: `GET /api/roster/lookup/{invoice}` (used for invoice→name auto-fill), `GET /api/roster/search?q=` (used for preference autocomplete, supports `excludeInvoice`)
+  - Staff: `GET /api/roster` (with search filter)
+  - Admin: `POST /api/roster` (single), `POST /api/roster/import-csv` (multipart or raw CSV; case-insensitive headers; upsert by invoice), `DELETE /api/roster/{id}`
+  - **Auto-link logic on guest submit:** When `linkedInvoiceNumbers` is sent parallel to `seatingPreferences`, each preference_resolution stores `linked_invoice_number`. If the linked invoice has already submitted → auto-confirm immediately. When ANY guest submits, any pending preference_resolution whose `linked_invoice_number` matches the new guest's invoice → auto-confirm (REVERSE direction). Result: zero fuzzy matching needed when both parties use the autocomplete.
 
 ### Frontend (`/app/frontend/src/`)
 - `/` — Guest IntakeForm (Phase 1 — mobile-friendly, stone-themed, with live duplicate warning)
 - `/confirmation` — Submission summary with optional duplicate banner
 - `/staff/login` — JWT login
-- `/staff` — Admin dashboard with **6 tabs** (Guest List, Unassigned Queue, **Tables & Seating**, Preferences, Activity Log, Staff Admin), sticky stats bar polling every 8s, side-drawer guest detail with notes thread
+- `/staff` — Admin dashboard with **7 tabs** (Guest List, Unassigned Queue, Tables & Seating, Preferences, **Roster**, Activity Log, Staff Admin), sticky stats bar polling every 8s, side-drawer guest detail with notes thread
 - **Phase 3 — Tables tab:** Per-ballroom cards grid with color-coded fill (gray/blue/yellow/green), click table → side modal with seated guests, picker to assign unassigned guests, capacity overflow with confirm dialog, physically-seated toggle, Auto-Suggest modal with plan preview + apply, ballroom CRUD (admin)
+- **Roster — IntakeForm + Admin tab:** Invoice number → 'we found your booking' banner with one-click name fill. Preference inputs → debounced autocomplete dropdown with green '✓ linked' indicator when picked. Admin Roster tab: CSV upload, manual add, search, delete. Discreet "Staff login" footer link on the public intake form.
 
 ### Database (Supabase Postgres)
 All Phase 1 + 2 + future-phase tables created: `guests`, `staff_users`, `staff_notes`, `preference_resolutions`, `ballrooms`, `tables`, `seat_assignments`, `canvas_objects`, `activity_log`, `archives`.
 
 ## Test Status
-- **Backend:** 70/70 pytest cases pass (Phase 1+2: 39 + Phase 3: 31)
-- **Frontend:** All critical flows verified via Playwright (intake submit, duplicate warning, login, dashboard tabs, search/filter/drawer/notes, prefs subtabs, activity log, staff CRUD, logout, ballroom create, table create, picker assign, color coding, auto-suggest plan + apply, physically-seated toggle)
-- **Bugs fixed during iterations:** (i1) Dashboard.jsx useEffect-returning-Promise; (i2) server.py preference-match `.fetchall()` returning string-keyed tuple rows — broke 2nd+ guest assignment
+- **Backend:** 89/89 pytest cases pass (Phase 1+2: 39 + Phase 3: 31 + Roster: 19)
+- **Frontend:** All critical flows verified via Playwright (intake submit, duplicate warning, login, dashboard tabs, search/filter/drawer/notes, prefs subtabs, activity log, staff CRUD, logout, ballroom create, table create, picker assign, color coding, auto-suggest plan + apply, physically-seated toggle, **roster CSV upload, roster autocomplete on intake form, linked indicator, killer reverse-direction auto-link verified end-to-end**)
+- **Bugs fixed during iterations:** (i1) Dashboard.jsx useEffect-returning-Promise; (i2) server.py preference-match `.fetchall()` returning string-keyed tuple rows; (i3) db.py ALTER TABLE ordering before index
 
-## Backlog — Phases 4-5
+## Backlog — Phase 4+5
 ### P0 / Phase 4: Ballroom Canvas Designer
 - Per-ballroom canvas with snap-to-grid
 - Build from scratch (dimensions, walls, fixed elements) OR upload floor plan image and trace

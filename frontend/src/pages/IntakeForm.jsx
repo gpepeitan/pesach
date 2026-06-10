@@ -222,6 +222,9 @@ export function IntakeForm() {
           </div>
         </form>
         <p className="text-center text-sm text-stone-500 mt-6">If you have any questions, please contact our concierge team.</p>
+        <p className="text-center mt-3">
+          <a href="/staff/login" data-testid="staff-link" className="text-xs text-stone-400 hover:text-stone-700 underline-offset-4 hover:underline">Staff login</a>
+        </p>
       </div>
     </div>
   );
