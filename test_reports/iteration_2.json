@@ -1,0 +1,76 @@
+{
+  "summary": "Phase 3 (Ballrooms, Tables, Seat Assignment, Preference-Match Detection, Auto-Suggest) end-to-end testing. Backend: 31/31 pytest cases pass in /app/backend/tests/test_phase3.py after fixing one critical bug. Frontend: tab-tables, ballroom create, table create + open modal, picker-based guest assign, color coding (gray/blue/yellow/green), Auto-Suggest modal, stats refresh — all verified live against the preview URL with the seeded admin (Eitanp). Cumulative backend test count is now 70 (39 phase 1+2 + 31 phase 3), all passing.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/tables/{id}/assign",
+        "issue": "FIXED — assigning a 2nd (or later) guest to a table returned 500 due to SQLAlchemy row-access bug. server.py line 699 used `.fetchall()` then indexed rows by string key (r['id']), which raises 'TypeError: tuple indices must be integers or slices, not str'. Changed to `.mappings().all()`. Without this fix, NO table could ever receive more than one guest, breaking preference-match detection, overflow handling, and the seat-fill workflow end-to-end.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/tables (and PATCH /api/tables/{id})",
+        "issue": "Endpoint allows any authenticated staff (non-admin) to create or modify tables. The product spec says ballrooms are admin-only; tables don't explicitly require admin, but for consistency with the seating-area governance you may want to lock these behind require_admin too."
+      },
+      {
+        "endpoint": "POST /api/seating/auto-suggest",
+        "issue": "ballroomId is a query parameter but the frontend & request body conventions suggest it's optional. When ballroomId is supplied but invalid, endpoint silently returns an empty plan (no 404). Consider validating the ballroom exists."
+      },
+      {
+        "endpoint": "POST /api/seating/auto-suggest/apply",
+        "issue": "Does NOT re-validate capacity before applying. If a user takes a stale plan after manual assignments have happened, the apply step could push a table beyond capacity. Currently it just writes the rows. Recommend per-item capacity check + skip-with-warning."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Tables & Seating",
+        "issues": [
+          "When all guests are already assigned, the Auto-Suggest modal shows 'No unassigned guests' + 'No suggestions could be made.' — Apply Plan button is still visually enabled (just disabled-styled). Consider hiding the Apply Plan button entirely when plan is empty.",
+          "Table card 'X / Y' counter exceeds capacity when allowOverflow is used (e.g. '113/20' was visible after testing) — this is correct data but the visual treatment (still showing 'FULL' with green) could be ambiguous; consider an 'overflow' red badge."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase3.py",
+    "/app/backend/tests/test_backend.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_phase3.xml"
+  ],
+  "action_items": [
+    "REVIEW the SQLAlchemy fix at /app/backend/server.py line 699 (other_ids listcomp). Recommend a codebase-wide audit for any other `for r in (...).fetchall()` followed by `r[\"key\"]` access — pattern is brittle.",
+    "(Optional) Require admin on POST /api/tables and PATCH /api/tables/{id} for consistency with ballroom CRUD.",
+    "(Optional) auto-suggest/apply should re-check capacity per-item to avoid stale-plan overflow.",
+    "(Optional UI) Hide Apply Plan when plan length is 0."
+  ],
+  "critical_code_review_comments": [
+    "BUG FIXED in /app/backend/server.py:699 — used .fetchall() + dict-key access; broke every second-guest assignment with a 500.",
+    "Auto-suggest algorithm using union-find on confirmed mutual prefs is correct; fits smallest-table-that-holds-cluster (line 810) — good greedy heuristic. Edge case: a cluster larger than the largest table will skip via 'continue' silently — consider a 'reason: unseatable' entry in the plan so the staff knows.",
+    "table_color() function correctly implements the gray/blue/yellow/green thresholds. Verified via 6 separate states in backend tests + frontend visual confirmation.",
+    "HTTPException(409, {dict}) returns the dict under detail key — frontend reads `err?.response?.data?.detail?.error`. Works but the dict-detail pattern is non-standard FastAPI; documentation comment would help.",
+    "seat_assignments table — on unassign, the row is hard-deleted (line 740). Consider soft-delete + timestamps for audit, since seat_check toggles physically_seated and you may want to retain history.",
+    "server.py is now 896 lines (~150 added in Phase 3). Exceeds the 700-line threshold — recommend splitting into routers/ballrooms.py, routers/tables.py, routers/seating.py.",
+    "TablesTab.jsx (346 lines, 5 sub-components in one file) — fine for now, but TableDetailModal and AutoSuggestModal would benefit from being separated for testability.",
+    "Frontend uses window.confirm() for overflow override — works in Playwright via page.on('dialog'), but better UX would be a proper shadcn AlertDialog.",
+    "Good: all interactive elements have data-testid attributes; auto-suggest plan items, picker items, seated-guest rows all individually addressable."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (line 699: .fetchall() -> .mappings().all() to fix string-key access on row tuples)",
+    "/app/backend/tests/test_phase3.py (new — 31 Phase 3 tests covering ballrooms, tables, assign/unassign, capacity_exceeded, preference-match, auto-suggest plan/apply, activity_log audit)"
+  ],
+  "success_rate": {
+    "backend": "100% (31/31 phase 3 + 39/39 phase 1+2 = 70/70)",
+    "frontend": "100% (all flows in test scope verified — login, tab nav, ballroom create, table create, modal open, picker assign, color coding visible, auto-suggest modal, stats poll)"
+  },
+  "test_credentials": "Admin: Eitanp / Gpepeitan!23 (display: 'eitan prigan'). Non-admin TESTp3_* user created in fixture for the 403 check.",
+  "seed_data_creation": "Created several TEST_Ballroom_*, TEST_Table*, TEST_PM_Table, TEST_AS_Table rows; TEST_PM Alice/Bob mutual-pref pair; multiple TEST_P3 / TEST_AS / TEST_PM guest rows. All prefixed for filtering. NOT cleaned up (tests are idempotent via unique timestamps); after backend run the system shows 22 guests / 173 people, ~95.5% seated.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 3 tests live at /app/backend/tests/test_phase3.py — run with `pytest /app/backend/tests/ -v --tb=short` (combined 70 cases ~60s). The Phase 3 file relies on a shared `state` dict and tests are order-dependent within classes (which pytest guarantees). The single critical backend fix was at server.py line 699; if anyone refactors that area, re-run test_phase3 — the second-guest assign was the failure signal. Frontend Tables tab uses Auto-Suggest with optional ballroomId query param — backend currently ignores invalid ballroomId values silently.",
+  "rca of the issue": "Critical bug at /app/backend/server.py:699 in the preference-match detection block of POST /api/tables/{id}/assign. The code called `.fetchall()` on a SQLAlchemy AsyncSession execute result, which yields tuple-like Row objects that only support integer indexing. The listcomp then tried to access `r['id']` (string key), raising 'TypeError: tuple indices must be integers or slices, not str' for every assign call where there was already at least one other guest at the table. The first-guest-assign always succeeded because other_ids was [] and the listcomp didn't iterate. Symptom: assigning a 2nd, 3rd … guest to any table returned a 500. Capacity-exceeded check (line 691) ran BEFORE this code path, so the 409 path was also masked into a 500. Mitigation applied: changed `.fetchall()` to `.mappings().all()` so row objects support dict-style access — the existing `r['id']` then works. Verified by re-running all 31 Phase 3 tests: 6 previously-failing tests now pass. Frontend test then exercised the same code path live and showed seated-guest entries populating correctly."
+}

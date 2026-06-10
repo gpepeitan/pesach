@@ -493,6 +493,357 @@ async def guest_prefs(guest_id: int, user: dict = Depends(get_current_user), db:
     return [pref_to_api(r) for r in rows]
 
 
+# ---------- BALLROOMS / TABLES / SEATING ----------
+class BallroomInput(BaseModel):
+    name: str
+    widthFt: Optional[float] = None
+    heightFt: Optional[float] = None
+
+
+class TableInput(BaseModel):
+    tableNumber: int
+    label: Optional[str] = None
+    ballroomId: int
+    shape: str = "round"  # round | rectangular | square
+    maxCapacity: int = 10
+    canvasX: Optional[float] = 0
+    canvasY: Optional[float] = 0
+    rotation: Optional[float] = 0
+    notes: Optional[str] = None
+
+
+class TableUpdateInput(BaseModel):
+    tableNumber: Optional[int] = None
+    label: Optional[str] = None
+    ballroomId: Optional[int] = None
+    shape: Optional[str] = None
+    maxCapacity: Optional[int] = None
+    canvasX: Optional[float] = None
+    canvasY: Optional[float] = None
+    rotation: Optional[float] = None
+    notes: Optional[str] = None
+
+
+class AssignInput(BaseModel):
+    guestId: int
+    allowOverflow: bool = False  # override capacity check
+
+
+class SeatedInput(BaseModel):
+    seated: bool
+
+
+def table_color(seats_taken: int, capacity: int) -> str:
+    if seats_taken == 0: return "gray"
+    if seats_taken >= capacity: return "green"
+    if capacity - seats_taken <= 2: return "yellow"
+    return "blue"
+
+
+def ballroom_to_api(b) -> dict:
+    return {"id": b["id"], "name": b["name"],
+            "widthFt": float(b["width_ft"]) if b["width_ft"] is not None else None,
+            "heightFt": float(b["height_ft"]) if b["height_ft"] is not None else None,
+            "backgroundImageUrl": b["background_image_url"],
+            "scaleFactor": float(b["scale_factor"]) if b["scale_factor"] is not None else 1.0,
+            "createdAt": b["created_at"].isoformat()}
+
+
+def table_to_api(t, seated=0) -> dict:
+    cap = t["max_capacity"]
+    return {"id": t["id"], "tableNumber": t["table_number"], "label": t["label"],
+            "ballroomId": t["ballroom_id"], "shape": t["shape"],
+            "maxCapacity": cap, "seatsTaken": seated, "seatsRemaining": cap - seated,
+            "color": table_color(seated, cap),
+            "canvasX": float(t["canvas_x"]) if t["canvas_x"] is not None else 0,
+            "canvasY": float(t["canvas_y"]) if t["canvas_y"] is not None else 0,
+            "rotation": float(t["rotation"]) if t["rotation"] is not None else 0,
+            "notes": t["notes"]}
+
+
+@api.get("/ballrooms")
+async def list_ballrooms(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(text("SELECT * FROM ballrooms ORDER BY name"))).mappings().all()
+    return [ballroom_to_api(r) for r in rows]
+
+
+@api.post("/ballrooms", status_code=201)
+async def create_ballroom(body: BallroomInput, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(text("""
+        INSERT INTO ballrooms (name, width_ft, height_ft) VALUES (:n, :w, :h) RETURNING *
+    """), {"n": body.name, "w": body.widthFt, "h": body.heightFt})).mappings().first()
+    await log_activity(db, user, "ballroom_create", ballroom_id=row["id"], details={"name": body.name})
+    await db.commit()
+    return ballroom_to_api(row)
+
+
+@api.patch("/ballrooms/{ballroom_id}")
+async def update_ballroom(ballroom_id: int, body: BallroomInput, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(text("""
+        UPDATE ballrooms SET name=:n, width_ft=:w, height_ft=:h WHERE id=:i RETURNING *
+    """), {"i": ballroom_id, "n": body.name, "w": body.widthFt, "h": body.heightFt})).mappings().first()
+    if not row: raise HTTPException(404, "Ballroom not found")
+    await log_activity(db, user, "ballroom_update", ballroom_id=ballroom_id)
+    await db.commit()
+    return ballroom_to_api(row)
+
+
+@api.delete("/ballrooms/{ballroom_id}", status_code=204)
+async def delete_ballroom(ballroom_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    n = (await db.execute(text("SELECT COUNT(*) FROM tables WHERE ballroom_id=:i"), {"i": ballroom_id})).scalar()
+    if n: raise HTTPException(400, f"Ballroom has {n} tables — move or delete them first")
+    await db.execute(text("DELETE FROM ballrooms WHERE id=:i"), {"i": ballroom_id})
+    await log_activity(db, user, "ballroom_delete", ballroom_id=ballroom_id)
+    await db.commit()
+
+
+@api.get("/tables")
+async def list_tables(
+    user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+    ballroomId: Optional[int] = None,
+):
+    conds = []
+    params = {}
+    if ballroomId is not None:
+        conds.append("t.ballroom_id = :br"); params["br"] = ballroomId
+    where = ("WHERE " + " AND ".join(conds)) if conds else ""
+    rows = (await db.execute(text(f"""
+        SELECT t.*, COALESCE(SUM(g.party_size), 0) AS seated
+        FROM tables t
+        LEFT JOIN guests g ON g.table_id = t.id
+        {where}
+        GROUP BY t.id
+        ORDER BY t.table_number
+    """), params)).mappings().all()
+    return [table_to_api(r, int(r["seated"])) for r in rows]
+
+
+@api.post("/tables", status_code=201)
+async def create_table(body: TableInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(text("""
+        INSERT INTO tables (table_number, label, ballroom_id, shape, max_capacity, canvas_x, canvas_y, rotation, notes)
+        VALUES (:n, :l, :br, :sh, :c, :x, :y, :r, :nt) RETURNING *
+    """), {"n": body.tableNumber, "l": body.label, "br": body.ballroomId, "sh": body.shape,
+           "c": body.maxCapacity, "x": body.canvasX or 0, "y": body.canvasY or 0,
+           "r": body.rotation or 0, "nt": body.notes})).mappings().first()
+    await log_activity(db, user, "table_create", table_id=row["id"], ballroom_id=body.ballroomId,
+                       details={"number": body.tableNumber, "capacity": body.maxCapacity})
+    await db.commit()
+    return table_to_api(row, 0)
+
+
+@api.patch("/tables/{table_id}")
+async def update_table(table_id: int, body: TableUpdateInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    mapping = {"tableNumber": "table_number", "label": "label", "ballroomId": "ballroom_id",
+               "shape": "shape", "maxCapacity": "max_capacity", "canvasX": "canvas_x",
+               "canvasY": "canvas_y", "rotation": "rotation", "notes": "notes"}
+    sets, params = [], {"id": table_id}
+    for k, col in mapping.items():
+        v = getattr(body, k)
+        if v is not None: sets.append(f"{col}=:{col}"); params[col] = v
+    if not sets: raise HTTPException(400, "No fields to update")
+    row = (await db.execute(text(f"UPDATE tables SET {', '.join(sets)} WHERE id=:id RETURNING *"), params)).mappings().first()
+    if not row: raise HTTPException(404, "Table not found")
+    seated = (await db.execute(text("SELECT COALESCE(SUM(party_size),0) FROM guests WHERE table_id=:i"), {"i": table_id})).scalar()
+    await log_activity(db, user, "table_update", table_id=table_id, details=body.model_dump(exclude_none=True))
+    await db.commit()
+    return table_to_api(row, int(seated))
+
+
+@api.delete("/tables/{table_id}", status_code=204)
+async def delete_table(table_id: int, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    seated = (await db.execute(text("SELECT COUNT(*) FROM guests WHERE table_id=:i"), {"i": table_id})).scalar()
+    if seated:
+        raise HTTPException(400, f"{seated} guests are seated at this table — unassign them first")
+    await db.execute(text("DELETE FROM tables WHERE id=:i"), {"i": table_id})
+    await log_activity(db, user, "table_delete", table_id=table_id)
+    await db.commit()
+
+
+@api.get("/tables/{table_id}")
+async def get_table(table_id: int, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(text("SELECT * FROM tables WHERE id=:i"), {"i": table_id})).mappings().first()
+    if not row: raise HTTPException(404, "Table not found")
+    guests = (await db.execute(text("""
+        SELECT g.*, sa.physically_seated, sa.assigned_at, sa.assigned_by_session AS assigned_by
+        FROM guests g
+        LEFT JOIN seat_assignments sa ON sa.guest_id = g.id AND sa.table_id = g.table_id
+        WHERE g.table_id = :i
+        ORDER BY g.full_name
+    """), {"i": table_id})).mappings().all()
+    seated = sum(g["party_size"] for g in guests)
+    out = table_to_api(row, seated)
+    out["guests"] = [{
+        **guest_to_api(g),
+        "physicallySeated": bool(g["physically_seated"]) if g["physically_seated"] is not None else False,
+    } for g in guests]
+    return out
+
+
+@api.post("/tables/{table_id}/assign")
+async def assign_to_table(table_id: int, body: AssignInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    t = (await db.execute(text("SELECT * FROM tables WHERE id=:i"), {"i": table_id})).mappings().first()
+    if not t: raise HTTPException(404, "Table not found")
+    g = (await db.execute(text("SELECT * FROM guests WHERE id=:i"), {"i": body.guestId})).mappings().first()
+    if not g: raise HTTPException(404, "Guest not found")
+    seated = (await db.execute(text("SELECT COALESCE(SUM(party_size),0) FROM guests WHERE table_id=:i AND id<>:gid"),
+                                {"i": table_id, "gid": body.guestId})).scalar() or 0
+    if seated + g["party_size"] > t["max_capacity"] and not body.allowOverflow:
+        raise HTTPException(409, {
+            "error": "capacity_exceeded",
+            "message": f"Adding party of {g['party_size']} exceeds table capacity ({t['max_capacity']} seats, {seated} taken). Set allowOverflow=true to force.",
+            "capacity": t["max_capacity"], "seatsTaken": seated, "partySize": g["party_size"],
+        })
+
+    # detect preference satisfaction
+    other_ids = [r["id"] for r in (await db.execute(text("SELECT id FROM guests WHERE table_id=:i AND id<>:g"),
+                                                     {"i": table_id, "g": body.guestId})).mappings().all()]
+    pref_meta = {"mutualWith": [], "oneWayWith": []}
+    if other_ids:
+        rows = (await db.execute(text("""
+            SELECT a.guest_id, a.resolved_guest_id,
+                   (EXISTS(SELECT 1 FROM preference_resolutions b
+                    WHERE b.guest_id=a.resolved_guest_id AND b.resolved_guest_id=a.guest_id AND b.resolution_status='confirmed')) AS mutual
+            FROM preference_resolutions a
+            WHERE a.resolution_status='confirmed'
+              AND ((a.guest_id=:g AND a.resolved_guest_id = ANY(:others))
+                OR (a.resolved_guest_id=:g AND a.guest_id = ANY(:others)))
+        """), {"g": body.guestId, "others": other_ids})).mappings().all()
+        for r in rows:
+            other_id = r["resolved_guest_id"] if r["guest_id"] == body.guestId else r["guest_id"]
+            (pref_meta["mutualWith"] if r["mutual"] else pref_meta["oneWayWith"]).append(other_id)
+
+    await db.execute(text("""
+        UPDATE guests SET table_id=:t, ballroom_id=:b, status='fully_assigned', last_updated_timestamp=NOW()
+        WHERE id=:g
+    """), {"t": table_id, "b": t["ballroom_id"], "g": body.guestId})
+
+    await db.execute(text("DELETE FROM seat_assignments WHERE guest_id=:g"), {"g": body.guestId})
+    await db.execute(text("""
+        INSERT INTO seat_assignments (guest_id, table_id, assigned_by_session)
+        VALUES (:g, :t, :s)
+    """), {"g": body.guestId, "t": table_id, "s": user["display_name"]})
+
+    await log_activity(db, user, "seat_assign", guest_id=body.guestId, table_id=table_id,
+                       ballroom_id=t["ballroom_id"], details={"prefMeta": pref_meta, "overflow": body.allowOverflow})
+    await db.commit()
+    return {"ok": True, "preferenceMatch": pref_meta}
+
+
+@api.post("/tables/{table_id}/unassign/{guest_id}", status_code=200)
+async def unassign(table_id: int, guest_id: int, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(text("""
+        UPDATE guests SET table_id=NULL, ballroom_id=NULL, status='unassigned', last_updated_timestamp=NOW()
+        WHERE id=:g AND table_id=:t RETURNING id
+    """), {"g": guest_id, "t": table_id})
+    if not res.fetchone(): raise HTTPException(404, "Guest not at this table")
+    await db.execute(text("DELETE FROM seat_assignments WHERE guest_id=:g AND table_id=:t"), {"g": guest_id, "t": table_id})
+    await log_activity(db, user, "seat_unassign", guest_id=guest_id, table_id=table_id)
+    await db.commit()
+    return {"ok": True}
+
+
+@api.patch("/tables/{table_id}/guests/{guest_id}/seated")
+async def mark_seated(table_id: int, guest_id: int, body: SeatedInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    res = await db.execute(text("""
+        UPDATE seat_assignments SET physically_seated=:s WHERE guest_id=:g AND table_id=:t RETURNING id
+    """), {"s": body.seated, "g": guest_id, "t": table_id})
+    if not res.fetchone(): raise HTTPException(404, "Assignment not found")
+    await log_activity(db, user, "seat_check", guest_id=guest_id, table_id=table_id, details={"seated": body.seated})
+    await db.commit()
+    return {"ok": True}
+
+
+@api.post("/seating/auto-suggest")
+async def auto_suggest(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+                        ballroomId: Optional[int] = None):
+    """Returns a non-binding plan: list of {guestId, tableId, ballroomId, reason}.
+    Algorithm: build mutual-match clusters, sort by descending size, fit largest clusters first
+    into tables that can hold them. Then place remaining single guests by descending party_size.
+    """
+    where_clause = "WHERE t.ballroom_id=:b" if ballroomId else ""
+    params = {"b": ballroomId} if ballroomId else {}
+    res = await db.execute(text(f"""
+        SELECT t.*, COALESCE(SUM(g.party_size),0) AS seated
+        FROM tables t LEFT JOIN guests g ON g.table_id = t.id
+        {where_clause}
+        GROUP BY t.id ORDER BY t.max_capacity
+    """), params)
+    tables = res.mappings().all() or []
+    if not tables: raise HTTPException(400, "No tables available — create tables first")
+
+    guests = (await db.execute(text(
+        "SELECT id, full_name, party_size FROM guests WHERE status='unassigned'"
+    ))).mappings().all()
+    if not guests:
+        return {"plan": [], "summary": "No unassigned guests"}
+
+    # mutual cluster build via union-find on confirmed mutual edges
+    parent = {g["id"]: g["id"] for g in guests}
+    def find(x):
+        while parent[x] != x: parent[x] = parent[parent[x]]; x = parent[x]
+        return x
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb: parent[ra] = rb
+
+    gid_set = {g["id"] for g in guests}
+    mutuals = (await db.execute(text("""
+        SELECT a.guest_id, a.resolved_guest_id FROM preference_resolutions a
+        JOIN preference_resolutions b ON b.guest_id=a.resolved_guest_id AND b.resolved_guest_id=a.guest_id
+        WHERE a.resolution_status='confirmed' AND b.resolution_status='confirmed' AND a.guest_id < a.resolved_guest_id
+    """))).fetchall()
+    for a, b in mutuals:
+        if a in gid_set and b in gid_set: union(a, b)
+
+    by_root = {}
+    for g in guests:
+        by_root.setdefault(find(g["id"]), []).append(g)
+    clusters = sorted(by_root.values(), key=lambda c: -sum(x["party_size"] for x in c))
+
+    remaining = [{"id": t["id"], "ballroom_id": t["ballroom_id"], "cap": t["max_capacity"],
+                  "seated": int(t["seated"]), "number": t["table_number"]} for t in tables]
+    plan = []
+    for cluster in clusters:
+        size = sum(x["party_size"] for x in cluster)
+        # smallest table that fits the cluster
+        slot = next((t for t in remaining if (t["cap"] - t["seated"]) >= size), None)
+        if not slot:
+            # fall back to largest with room
+            slot = max(remaining, key=lambda t: t["cap"] - t["seated"])
+            if slot["cap"] - slot["seated"] <= 0: continue
+        for g in cluster:
+            if slot["cap"] - slot["seated"] >= g["party_size"]:
+                plan.append({"guestId": g["id"], "tableId": slot["id"],
+                             "ballroomId": slot["ballroom_id"], "tableNumber": slot["number"],
+                             "guestName": g["full_name"], "partySize": g["party_size"],
+                             "reason": "mutual_cluster" if len(cluster) > 1 else "size_fit"})
+                slot["seated"] += g["party_size"]
+
+    return {"plan": plan, "summary": f"{len(plan)} of {len(guests)} unassigned guests can be seated"}
+
+
+@api.post("/seating/auto-suggest/apply")
+async def auto_suggest_apply(plan: List[dict], user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    applied = 0
+    for item in plan:
+        gid, tid = item.get("guestId"), item.get("tableId")
+        if not gid or not tid: continue
+        t = (await db.execute(text("SELECT ballroom_id, max_capacity FROM tables WHERE id=:i"), {"i": tid})).mappings().first()
+        if not t: continue
+        await db.execute(text("""
+            UPDATE guests SET table_id=:t, ballroom_id=:b, status='fully_assigned', last_updated_timestamp=NOW() WHERE id=:g
+        """), {"t": tid, "b": t["ballroom_id"], "g": gid})
+        await db.execute(text("DELETE FROM seat_assignments WHERE guest_id=:g"), {"g": gid})
+        await db.execute(text("""
+            INSERT INTO seat_assignments (guest_id, table_id, assigned_by_session) VALUES (:g, :t, :s)
+        """), {"g": gid, "t": tid, "s": user["display_name"]})
+        applied += 1
+    await log_activity(db, user, "auto_suggest_apply", details={"applied": applied, "total": len(plan)})
+    await db.commit()
+    return {"applied": applied}
+
+
 # ---------- ACTIVITY LOG ----------
 @api.get("/activity-log")
 async def activity_log(

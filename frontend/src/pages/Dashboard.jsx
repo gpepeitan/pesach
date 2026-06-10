@@ -2,11 +2,13 @@ import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { apiClient } from "@/lib/api";
-import { LogOut, Users, ListChecks, GitMerge, ScrollText, UserCog, Search, X, MessageSquare, Check, AlertCircle, Loader2 } from "lucide-react";
+import { LogOut, Users, ListChecks, GitMerge, ScrollText, UserCog, Search, X, MessageSquare, Check, AlertCircle, Loader2, LayoutGrid } from "lucide-react";
+import TablesTab from "@/pages/TablesTab";
 
 const TABS = [
   { id: "guests", label: "Guest List", icon: Users },
   { id: "unassigned", label: "Unassigned Queue", icon: ListChecks },
+  { id: "tables", label: "Tables & Seating", icon: LayoutGrid },
   { id: "preferences", label: "Preferences", icon: GitMerge },
   { id: "activity", label: "Activity Log", icon: ScrollText },
   { id: "staff", label: "Staff (Admin)", icon: UserCog },
@@ -397,6 +399,7 @@ export default function Dashboard() {
       </div>
       {tab === "guests" && <GuestList openGuest={setSelected} />}
       {tab === "unassigned" && <UnassignedQueue openGuest={setSelected} />}
+      {tab === "tables" && <TablesTab isAdmin={user.isAdmin} />}
       {tab === "preferences" && <PreferencesTab />}
       {tab === "activity" && <ActivityLog />}
       {tab === "staff" && user.isAdmin && <StaffAdmin />}
