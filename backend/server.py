@@ -785,6 +785,108 @@ async def delete_ballroom(ballroom_id: int, user: dict = Depends(require_admin),
     await db.commit()
 
 
+class FloorPlanInput(BaseModel):
+    backgroundImageUrl: Optional[str] = None  # data URL or http URL
+    scaleFactor: Optional[float] = None
+
+
+@api.patch("/ballrooms/{ballroom_id}/floor-plan")
+async def set_floor_plan(ballroom_id: int, body: FloorPlanInput, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    sets, params = [], {"i": ballroom_id}
+    if body.backgroundImageUrl is not None:
+        sets.append("background_image_url=:url"); params["url"] = body.backgroundImageUrl
+    if body.scaleFactor is not None:
+        sets.append("scale_factor=:sf"); params["sf"] = body.scaleFactor
+    if not sets: raise HTTPException(400, "Nothing to update")
+    row = (await db.execute(text(f"UPDATE ballrooms SET {', '.join(sets)} WHERE id=:i RETURNING *"), params)).mappings().first()
+    if not row: raise HTTPException(404, "Ballroom not found")
+    await log_activity(db, user, "ballroom_floorplan_update", ballroom_id=ballroom_id)
+    await db.commit()
+    return ballroom_to_api(row)
+
+
+class CanvasObjectInput(BaseModel):
+    ballroomId: int
+    objectType: str  # 'stage' | 'dance_floor' | 'bar' | 'buffet' | 'carving' | 'pillar' | 'entrance' | 'exit' | 'blocker' | 'wall'
+    label: Optional[str] = None
+    x: float = 0
+    y: float = 0
+    width: float = 80
+    height: float = 80
+    rotation: float = 0
+
+
+class CanvasObjectUpdate(BaseModel):
+    label: Optional[str] = None
+    x: Optional[float] = None
+    y: Optional[float] = None
+    width: Optional[float] = None
+    height: Optional[float] = None
+    rotation: Optional[float] = None
+
+
+def canvas_obj_to_api(o) -> dict:
+    pos = o["position"] or {}; dim = o["dimensions"] or {}
+    return {"id": o["id"], "ballroomId": o["ballroom_id"], "objectType": o["object_type"],
+            "label": o["label"],
+            "x": float(pos.get("x", 0)), "y": float(pos.get("y", 0)),
+            "width": float(dim.get("width", 80)), "height": float(dim.get("height", 80)),
+            "rotation": float(o["rotation"] or 0)}
+
+
+@api.get("/ballrooms/{ballroom_id}/canvas-objects")
+async def list_canvas_objects(ballroom_id: int, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(text(
+        "SELECT * FROM canvas_objects WHERE ballroom_id=:i ORDER BY id"
+    ), {"i": ballroom_id})).mappings().all()
+    return [canvas_obj_to_api(r) for r in rows]
+
+
+@api.post("/canvas-objects", status_code=201)
+async def create_canvas_object(body: CanvasObjectInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    import json as _json
+    row = (await db.execute(text("""
+        INSERT INTO canvas_objects (ballroom_id, object_type, label, position, dimensions, rotation)
+        VALUES (:b, :t, :l, CAST(:p AS jsonb), CAST(:d AS jsonb), :r) RETURNING *
+    """), {"b": body.ballroomId, "t": body.objectType, "l": body.label,
+           "p": _json.dumps({"x": body.x, "y": body.y}),
+           "d": _json.dumps({"width": body.width, "height": body.height}),
+           "r": body.rotation})).mappings().first()
+    await log_activity(db, user, "canvas_object_create", ballroom_id=body.ballroomId, details={"type": body.objectType})
+    await db.commit()
+    return canvas_obj_to_api(row)
+
+
+@api.patch("/canvas-objects/{obj_id}")
+async def update_canvas_object(obj_id: int, body: CanvasObjectUpdate, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    import json as _json
+    cur = (await db.execute(text("SELECT * FROM canvas_objects WHERE id=:i"), {"i": obj_id})).mappings().first()
+    if not cur: raise HTTPException(404, "Object not found")
+    pos = dict(cur["position"] or {})
+    dim = dict(cur["dimensions"] or {})
+    if body.x is not None: pos["x"] = body.x
+    if body.y is not None: pos["y"] = body.y
+    if body.width is not None: dim["width"] = body.width
+    if body.height is not None: dim["height"] = body.height
+    sets, params = ["position=CAST(:p AS jsonb)", "dimensions=CAST(:d AS jsonb)"], {
+        "p": _json.dumps(pos), "d": _json.dumps(dim), "i": obj_id,
+    }
+    if body.label is not None: sets.append("label=:l"); params["l"] = body.label
+    if body.rotation is not None: sets.append("rotation=:r"); params["r"] = body.rotation
+    row = (await db.execute(text(f"UPDATE canvas_objects SET {', '.join(sets)} WHERE id=:i RETURNING *"), params)).mappings().first()
+    await db.commit()
+    return canvas_obj_to_api(row)
+
+
+@api.delete("/canvas-objects/{obj_id}", status_code=204)
+async def delete_canvas_object(obj_id: int, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(text("SELECT ballroom_id FROM canvas_objects WHERE id=:i"), {"i": obj_id})).mappings().first()
+    if not row: raise HTTPException(404, "Object not found")
+    await db.execute(text("DELETE FROM canvas_objects WHERE id=:i"), {"i": obj_id})
+    await log_activity(db, user, "canvas_object_delete", ballroom_id=row["ballroom_id"])
+    await db.commit()
+
+
 @api.get("/tables")
 async def list_tables(
     user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),

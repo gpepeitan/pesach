@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { apiClient } from "@/lib/api";
-import { Plus, Trash2, X, CheckCircle2, Circle, Sparkles, Loader2, AlertCircle, Users, Edit3 } from "lucide-react";
+import { Plus, Trash2, X, CheckCircle2, Circle, Sparkles, Loader2, AlertCircle, Users, Edit3, LayoutGrid } from "lucide-react";
+import BallroomCanvas from "@/pages/BallroomCanvas";
 
 const SHAPE_OPTIONS = [
   { value: "round", label: "Round" },
@@ -287,12 +288,22 @@ export default function TablesTab({ isAdmin }) {
   const [selectedTable, setSelectedTable] = useState(null);
   const [showAuto, setShowAuto] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  const [canvasBallroom, setCanvasBallroom] = useState(null);
 
   const load = useCallback(async () => {
     const [b, t] = await Promise.all([apiClient.get("/ballrooms"), apiClient.get("/tables")]);
     setBallrooms(b.data); setTables(t.data);
   }, []);
   useEffect(() => { load(); }, [load, reloadKey]);
+
+  // keep canvas in sync if user lands on a ballroom from this list
+  useEffect(() => {
+    if (canvasBallroom) {
+      const fresh = ballrooms.find(b => b.id === canvasBallroom.id);
+      if (fresh && fresh !== canvasBallroom) setCanvasBallroom(fresh);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ballrooms]);
 
   const tablesByBallroom = ballrooms.map(b => ({ ...b, tables: tables.filter(t => t.ballroomId === b.id) }));
   const orphan = tables.filter(t => !ballrooms.find(b => b.id === t.ballroomId));
@@ -323,7 +334,13 @@ export default function TablesTab({ isAdmin }) {
         <div key={b.id} className="mb-8" data-testid={`ballroom-${b.id}`}>
           <div className="flex justify-between items-center mb-3">
             <h3 className="text-lg font-semibold text-stone-800">{b.name} {b.widthFt && b.heightFt && <span className="text-xs text-stone-500 font-normal">({b.widthFt}×{b.heightFt} ft)</span>}</h3>
-            {isAdmin && <button onClick={() => deleteBallroom(b.id)} data-testid={`del-ballroom-${b.id}`} className="text-xs text-stone-500 hover:text-red-600 flex items-center gap-1"><Trash2 className="h-3 w-3" />Remove</button>}
+            <div className="flex items-center gap-2">
+              <button data-testid={`open-canvas-${b.id}`} onClick={() => setCanvasBallroom(b)}
+                className="text-xs bg-stone-800 text-white hover:bg-stone-900 px-3 py-1.5 rounded flex items-center gap-1">
+                <LayoutGrid className="h-3 w-3" />Open canvas
+              </button>
+              {isAdmin && <button onClick={() => deleteBallroom(b.id)} data-testid={`del-ballroom-${b.id}`} className="text-xs text-stone-500 hover:text-red-600 flex items-center gap-1"><Trash2 className="h-3 w-3" />Remove</button>}
+            </div>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {b.tables.map(t => <TableCard key={t.id} table={t} onClick={setSelectedTable} />)}
@@ -341,6 +358,14 @@ export default function TablesTab({ isAdmin }) {
       )}
       <TableDetailModal table={selectedTable} onClose={() => setSelectedTable(null)} onChange={() => setReloadKey(k => k + 1)} />
       <AutoSuggestModal open={showAuto} onClose={() => setShowAuto(false)} onApplied={() => setReloadKey(k => k + 1)} />
+      {canvasBallroom && (
+        <BallroomCanvas
+          ballroom={canvasBallroom}
+          isAdmin={isAdmin}
+          onClose={() => { setCanvasBallroom(null); setReloadKey(k => k + 1); }}
+          onOpenTable={(t) => setSelectedTable(t)}
+        />
+      )}
     </div>
   );
 }
