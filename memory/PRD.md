@@ -27,7 +27,7 @@ Originally bootstrapped in Replit on Node/Express/Postgres/Drizzle. Ported to Em
 - Every staff write action logged with staff_member_name + timestamp.
 - Multiple admins, no cap.
 
-## Implemented (Phase 1 + Phase 2 — 2026-01)
+## Implemented (Phase 1 + Phase 2 + Phase 3 — 2026-01)
 ### Backend (`/app/backend/server.py`, `db.py`)
 - Auto-creates full Postgres schema on startup (Phase 1 + 2 + forward-compat tables for Phase 3-5)
 - Auto-seeds admin user (Eitanp) on startup
@@ -38,30 +38,29 @@ Originally bootstrapped in Replit on Node/Express/Postgres/Drizzle. Ported to Em
 - Preferences: `GET /api/preferences/mutual|one-way|unresolved`, `PATCH /api/preferences/{id}/resolve`, `GET /api/guests/{id}/preference-resolutions`
 - Activity: `GET /api/activity-log` (filterable)
 - Staff (admin): `GET/POST/PATCH /api/staff`
+- **Phase 3 additions:**
+  - Ballrooms: `GET/POST/PATCH/DELETE /api/ballrooms` (admin for writes)
+  - Tables: `GET/POST/PATCH/DELETE /api/tables` (filter by `ballroomId`), `GET /api/tables/{id}` (with seated guests)
+  - Assignment: `POST /api/tables/{id}/assign` (with capacity check, `allowOverflow` override, preference-match metadata), `POST /api/tables/{id}/unassign/{guestId}`, `PATCH /api/tables/{id}/guests/{guestId}/seated`
+  - Auto-suggest: `POST /api/seating/auto-suggest` (returns plan, no writes), `POST /api/seating/auto-suggest/apply` (applies the reviewed plan)
 
 ### Frontend (`/app/frontend/src/`)
 - `/` — Guest IntakeForm (Phase 1 — mobile-friendly, stone-themed, with live duplicate warning)
 - `/confirmation` — Submission summary with optional duplicate banner
 - `/staff/login` — JWT login
-- `/staff` — Admin dashboard with 5 tabs (Guest List, Unassigned Queue, Preferences, Activity Log, Staff Admin), sticky stats bar polling every 8s, side-drawer guest detail with notes thread
+- `/staff` — Admin dashboard with **6 tabs** (Guest List, Unassigned Queue, **Tables & Seating**, Preferences, Activity Log, Staff Admin), sticky stats bar polling every 8s, side-drawer guest detail with notes thread
+- **Phase 3 — Tables tab:** Per-ballroom cards grid with color-coded fill (gray/blue/yellow/green), click table → side modal with seated guests, picker to assign unassigned guests, capacity overflow with confirm dialog, physically-seated toggle, Auto-Suggest modal with plan preview + apply, ballroom CRUD (admin)
 
 ### Database (Supabase Postgres)
 All Phase 1 + 2 + future-phase tables created: `guests`, `staff_users`, `staff_notes`, `preference_resolutions`, `ballrooms`, `tables`, `seat_assignments`, `canvas_objects`, `activity_log`, `archives`.
 
 ## Test Status
-- **Backend:** 39/39 pytest cases pass (auth, guest CRUD with dup detection, filters/sort/stats, notes, preferences mutual/one-way/unresolved + resolve, activity log, admin staff mgmt)
-- **Frontend:** All critical flows verified via Playwright (intake submit, duplicate warning, login, dashboard tabs, search/filter/drawer/notes, prefs subtabs, activity log, staff CRUD, logout)
-- **One bug fixed during testing:** Dashboard.jsx useEffect-returning-Promise crash (resolved)
+- **Backend:** 70/70 pytest cases pass (Phase 1+2: 39 + Phase 3: 31)
+- **Frontend:** All critical flows verified via Playwright (intake submit, duplicate warning, login, dashboard tabs, search/filter/drawer/notes, prefs subtabs, activity log, staff CRUD, logout, ballroom create, table create, picker assign, color coding, auto-suggest plan + apply, physically-seated toggle)
+- **Bugs fixed during iterations:** (i1) Dashboard.jsx useEffect-returning-Promise; (i2) server.py preference-match `.fetchall()` returning string-keyed tuple rows — broke 2nd+ guest assignment
 
-## Backlog — Phases 3-5
-### P0 / Phase 3: Table Management + Seating Assignment
-- CRUD for `tables` (number, label, shape, dimensions, capacity, ballroom)
-- Assign guest → table with party-keep-together + preference-aware logic
-- Auto-suggest seating engine (mutual matches first, then by party size)
-- Color-coded table fill status (green/yellow/blue/gray)
-- "Physically seated" checklist per table
-
-### P1 / Phase 4: Ballroom Canvas Designer
+## Backlog — Phases 4-5
+### P0 / Phase 4: Ballroom Canvas Designer
 - Per-ballroom canvas with snap-to-grid
 - Build from scratch (dimensions, walls, fixed elements) OR upload floor plan image and trace
 - Placeable: round/rect/square tables, bar/buffet/carving stations, stages, dance floor, entrance/exit, pillars, blockers

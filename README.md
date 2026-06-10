@@ -48,7 +48,7 @@ Visit `http://localhost:3000` for the guest intake form, or `/staff/login` for s
 
 **Phase 2 (Complete):** Staff admin dashboard with auth, guest management, preferences graph, stats bar, notes, activity log.
 
-**Phase 3 (Planned):** Table management + seating assignment + auto-suggest engine.
+**Phase 3 (Complete — 2026-01):** Ballroom + table management, seat assignment with party-keep-together and capacity/overflow logic, preference-match detection on assign, color-coded fill status (gray/blue/yellow/green), physically-seated checklist, auto-suggest seating engine (mutual-cluster-first union-find, then greedy by party size, plan-preview-then-apply).
 
 **Phase 4 (Planned):** Ballroom floor-plan canvas designer with drag-drop, floor-plan upload, auto-arrange.
 
