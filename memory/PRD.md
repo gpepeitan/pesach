@@ -27,7 +27,7 @@ Originally bootstrapped in Replit on Node/Express/Postgres/Drizzle. Ported to Em
 - Every staff write action logged with staff_member_name + timestamp.
 - Multiple admins, no cap.
 
-## Implemented (Phase 1 + Phase 2 + Phase 3 + Roster — 2026-01)
+## Implemented (Phase 1 + Phase 2 + Phase 3 + Roster + Phase 4 — 2026-01)
 ### Backend (`/app/backend/server.py`, `db.py`)
 - Auto-creates full Postgres schema on startup (Phase 1 + 2 + forward-compat tables for Phase 3-5)
 - Auto-seeds admin user (Eitanp) on startup
@@ -48,6 +48,10 @@ Originally bootstrapped in Replit on Node/Express/Postgres/Drizzle. Ported to Em
   - Staff: `GET /api/roster` (with search filter)
   - Admin: `POST /api/roster` (single), `POST /api/roster/import-csv` (multipart or raw CSV; case-insensitive headers; upsert by invoice), `DELETE /api/roster/{id}`
   - **Auto-link logic on guest submit:** When `linkedInvoiceNumbers` is sent parallel to `seatingPreferences`, each preference_resolution stores `linked_invoice_number`. If the linked invoice has already submitted → auto-confirm immediately. When ANY guest submits, any pending preference_resolution whose `linked_invoice_number` matches the new guest's invoice → auto-confirm (REVERSE direction). Result: zero fuzzy matching needed when both parties use the autocomplete.
+- **Phase 4 additions (Ballroom Canvas Designer):**
+  - `PATCH /api/ballrooms/{id}/floor-plan` — admin upload of base64 data-URL floor plan image
+  - `GET /api/ballrooms/{id}/canvas-objects`, `POST /api/canvas-objects`, `PATCH /api/canvas-objects/{id}`, `DELETE /api/canvas-objects/{id}` — full CRUD for non-table canvas decorations
+  - Frontend: full-screen `BallroomCanvas` (SVG) with grid, pan, zoom +/-/fit, palette of 12 placeable item types (3 table shapes + stage/dance floor/bar/buffet/carving/pillar/entrance/exit/blocker), drag-and-drop with snap-to-grid persistence, double-click table → reuses Phase 3 modal, floor plan image as semi-transparent SVG background
 
 ### Frontend (`/app/frontend/src/`)
 - `/` — Guest IntakeForm (Phase 1 — mobile-friendly, stone-themed, with live duplicate warning)
@@ -61,11 +65,11 @@ Originally bootstrapped in Replit on Node/Express/Postgres/Drizzle. Ported to Em
 All Phase 1 + 2 + future-phase tables created: `guests`, `staff_users`, `staff_notes`, `preference_resolutions`, `ballrooms`, `tables`, `seat_assignments`, `canvas_objects`, `activity_log`, `archives`.
 
 ## Test Status
-- **Backend:** 89/89 pytest cases pass (Phase 1+2: 39 + Phase 3: 31 + Roster: 19)
-- **Frontend:** All critical flows verified via Playwright (intake submit, duplicate warning, login, dashboard tabs, search/filter/drawer/notes, prefs subtabs, activity log, staff CRUD, logout, ballroom create, table create, picker assign, color coding, auto-suggest plan + apply, physically-seated toggle, **roster CSV upload, roster autocomplete on intake form, linked indicator, killer reverse-direction auto-link verified end-to-end**)
-- **Bugs fixed during iterations:** (i1) Dashboard.jsx useEffect-returning-Promise; (i2) server.py preference-match `.fetchall()` returning string-keyed tuple rows; (i3) db.py ALTER TABLE ordering before index
+- **Backend:** 101/101 pytest cases pass (Phase 1+2: 39 + Phase 3: 31 + Roster: 19 + Phase 4: 12)
+- **Frontend:** All critical flows verified via Playwright across 4 testing iterations
+- **Bugs fixed during iterations:** (i1) Dashboard.jsx useEffect-returning-Promise; (i2) server.py preference-match tuple-row access; (i3) db.py ALTER TABLE ordering; (i4) BallroomCanvas.jsx nullish-coalescing precedence on drag offset
 
-## Backlog — Phase 4+5
+## Backlog — Remaining
 ### P0 / Phase 4: Ballroom Canvas Designer
 - Per-ballroom canvas with snap-to-grid
 - Build from scratch (dimensions, walls, fixed elements) OR upload floor plan image and trace

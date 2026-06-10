@@ -78,7 +78,9 @@ export default function BallroomCanvas({ ballroom, onClose, onOpenTable, isAdmin
     if (!isAdmin) return;
     e.stopPropagation();
     const { x, y } = screenToCanvas(e.clientX, e.clientY);
-    setDrag({ kind, id: item.id, dx: x - item.canvasX ?? x - item.x, dy: y - item.canvasY ?? y - item.y, current: { x: item.canvasX ?? item.x, y: item.canvasY ?? item.y } });
+    const ix = item.canvasX ?? item.x ?? 0;
+    const iy = item.canvasY ?? item.y ?? 0;
+    setDrag({ kind, id: item.id, dx: x - ix, dy: y - iy, current: { x: ix, y: iy } });
   };
 
   const onSvgPointerDown = (e) => {
