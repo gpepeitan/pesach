@@ -59,6 +59,14 @@
 ### Drag-bug fix
 - [x] Window-level `pointerup` / `pointercancel` ensures drag always stops, even outside the canvas
 
+### Navigation (added after first frontend pass)
+- [x] Mouse-wheel zoom (cursor-anchored)
+- [x] Space-bar + drag = pan anywhere (works even over objects)
+- [x] Middle-click drag = pan
+- [x] Cursor feedback (grab / grabbing / crosshair)
+- [x] BUG fix: doors now have a proper hit area and are selectable
+- [x] BUG fix: calibration captures clicks on the floor-plan image (not only on the empty canvas)
+
 ---
 
 ## Phase 5 — Commercial Readiness (NEXT)

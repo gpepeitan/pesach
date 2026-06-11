@@ -90,6 +90,13 @@ function snapVal(v, gridPx, on) {
   return Math.round(v / gridPx) * gridPx;
 }
 
+// True when the event target is a form input — avoid hijacking the space key.
+function isTypingTarget(el) {
+  if (!el) return false;
+  const t = (el.tagName || "").toLowerCase();
+  return t === "input" || t === "textarea" || t === "select" || el.isContentEditable;
+}
+
 function snapAngle(deg) {
   const norm = ((deg % 360) + 360) % 360;
   return Math.round(norm / 45) * 45;
@@ -228,19 +235,55 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     setDrag({ kind, id: item.id, dx: x - ix, dy: y - iy, current: { x: ix, y: iy } });
   };
 
+  // Space-bar held = "hand tool" — drag anywhere to pan, even over objects.
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  useEffect(() => {
+    const dn = (e) => { if (e.code === "Space" && !e.repeat && !isTypingTarget(e.target)) { e.preventDefault(); setSpaceHeld(true); } };
+    const up = (e) => { if (e.code === "Space") setSpaceHeld(false); };
+    window.addEventListener("keydown", dn);
+    window.addEventListener("keyup", up);
+    return () => { window.removeEventListener("keydown", dn); window.removeEventListener("keyup", up); };
+  }, []);
+
+  // Middle-button-down or space-bar-down → force pan (capture before objects).
+  const onSvgPointerDownCapture = (e) => {
+    if (e.button === 1 || (e.button === 0 && spaceHeld)) {
+      e.stopPropagation(); e.preventDefault();
+      setPanning({ sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y });
+    }
+  };
+
   const onSvgPointerDown = (e) => {
+    // Calibration takes priority — any click on the canvas captures a calibration point
+    // (the calibration overlay rect routes here via the data-bg attribute).
+    if (calibration.step === "awaiting-p1" || calibration.step === "awaiting-p2") {
+      e.stopPropagation(); e.preventDefault();
+      const { x, y } = screenToCanvas(e.clientX, e.clientY);
+      if (calibration.step === "awaiting-p1") setCalibration({ ...calibration, p1: { x, y }, step: "awaiting-p2" });
+      else                                    setCalibration({ ...calibration, p2: { x, y }, step: "awaiting-distance" });
+      return;
+    }
     // Click on empty canvas → start pan and deselect
     const isBg = e.target === svgRef.current || (e.target.getAttribute && e.target.getAttribute("data-bg") === "1");
     if (!isBg) return;
-    // Calibration: capture clicks instead of pan
-    if (calibration.step === "awaiting-p1" || calibration.step === "awaiting-p2") {
-      const { x, y } = screenToCanvas(e.clientX, e.clientY);
-      if (calibration.step === "awaiting-p1") setCalibration({ ...calibration, p1: { x, y }, step: "awaiting-p2" });
-      else if (calibration.step === "awaiting-p2") setCalibration({ ...calibration, p2: { x, y }, step: "awaiting-distance" });
-      return;
-    }
     setSelection(null);
     setPanning({ sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y });
+  };
+
+  // Mouse wheel: zoom with cursor as the anchor point (so the point under the
+  // cursor stays put). Also middle-button drag and space-bar drag pan everywhere.
+  const onWheel = (e) => {
+    e.preventDefault();
+    const r = svgRef.current.getBoundingClientRect();
+    const mx = e.clientX - r.left;
+    const my = e.clientY - r.top;
+    const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+    const newZoom = Math.max(0.2, Math.min(4, zoom * factor));
+    // World coords at cursor must remain constant: W = m/z - p
+    const wx = mx / zoom - pan.x;
+    const wy = my / zoom - pan.y;
+    setZoom(newZoom);
+    setPan({ x: mx / newZoom - wx, y: my / newZoom - wy });
   };
 
   // ── Resize handle press
@@ -576,8 +619,12 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
 
         {/* ─── Canvas ──────────────────────────────────────────────────── */}
         <div className="flex-1 bg-stone-700 relative overflow-hidden">
-          <svg ref={svgRef} className="w-full h-full" onPointerDown={onSvgPointerDown} data-testid="canvas-svg"
-               style={{ cursor: panning ? "grabbing" : (calibration.step.startsWith("awaiting") ? "crosshair" : "grab") }}>
+          <svg ref={svgRef} className="w-full h-full"
+               onPointerDownCapture={onSvgPointerDownCapture}
+               onPointerDown={onSvgPointerDown}
+               onWheel={onWheel}
+               data-testid="canvas-svg"
+               style={{ cursor: panning ? "grabbing" : (spaceHeld ? "grab" : (calibration.step.startsWith("awaiting") ? "crosshair" : "default")) }}>
             <defs>
               <pattern id="grid-subtle" width={Math.max(2, gridPx)} height={Math.max(2, gridPx)} patternUnits="userSpaceOnUse">
                 {/* Grid kept invisible (transparent dot) — snapping still works visually via guides */}
@@ -642,6 +689,15 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
                   onRemove={() => removeObject(o.id)} pxPerFt={pxPerFt} />
               ))}
 
+              {/* Calibration overlay — captures all clicks during calibration so
+                  the user can hit any point (including over the floor-plan image or objects). */}
+              {(calibration.step === "awaiting-p1" || calibration.step === "awaiting-p2") && (
+                <rect data-bg="1"
+                      x={-5000} y={-5000} width={20000} height={20000}
+                      fill="rgba(0,0,0,0.001)"
+                      style={{ cursor: "crosshair" }} />
+              )}
+
               {/* Calibration overlay */}
               {calibration.p1 && (
                 <circle cx={calibration.p1.x} cy={calibration.p1.y} r={5} fill="#fbbf24" stroke="#7c2d12" strokeWidth="2" />
@@ -660,9 +716,9 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
             {calibration.step !== "idle" ? (
               <CalibrationHelp step={calibration.step} onFinish={finishCalibration} onCancel={() => setCalibration({ step: "idle", p1: null, p2: null })} />
             ) : isAdmin ? (
-              <><strong>Click</strong> an object to select; drag to move · corner handles resize · top handle rotates (Shift = free, otherwise 45° snap) · <strong>Double-click</strong> a table to manage seating</>
+              <><strong>Navigate:</strong> scroll = zoom · drag empty canvas (or hold <kbd className="px-1 bg-stone-700 rounded">Space</kbd>) = pan · middle-click drag = pan · <strong>Edit:</strong> click an object, drag to move, corner handles resize, top handle rotates (Shift = free) · <strong>Double-click</strong> a table to seat guests</>
             ) : (
-              <><strong>Double-click</strong> a table to manage seating · drag the background to pan</>
+              <><strong>Navigate:</strong> scroll = zoom · drag = pan · <strong>Double-click</strong> a table to manage seating</>
             )}
           </div>
           {savingFp && <div className="absolute top-3 right-3 bg-emerald-700 text-white text-sm px-3 py-1 rounded flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" />Saving plan…</div>}
@@ -826,14 +882,22 @@ function DoorBody({ w, h, isDouble, swing }) {
   // Swing direction (left/right) flips which way the arc curves vertically.
   // The "wall" the door sits on is the top edge (y=0); the swing arcs into the room (y>0) by default.
   const swingDown = swing !== "left"; // default: door swings "right" → arc down into room
-  const arcY = swingDown ? h * 8 : -h * 8; // big radius for visual; clipped naturally
   const wallStroke = "#0f172a", arcStroke = "#475569";
+
+  // Invisible hit area so the (otherwise stroke-only) door is clickable across
+  // the entire swing region; covers both the wall slot and the arc bbox.
+  const hitTop    = swingDown ? -8 : -w - 4;
+  const hitHeight = w + 12;
+  const hit = (
+    <rect x={-4} y={hitTop} width={w + 8} height={hitHeight} fill="rgba(255,255,255,0.001)" />
+  );
 
   if (!isDouble) {
     const r = w; // door slab length acts as arc radius
     const endY = swingDown ? r : -r;
     return (
       <g>
+        {hit}
         {/* wall slot */}
         <line x1={0} y1={0} x2={w} y2={0} stroke={wallStroke} strokeWidth="3" />
         {/* door slab (the open leaf) — rendered as a line at swing angle */}
@@ -850,6 +914,7 @@ function DoorBody({ w, h, isDouble, swing }) {
   const r = hw;
   return (
     <g>
+      {hit}
       <line x1={0} y1={0} x2={w} y2={0} stroke={wallStroke} strokeWidth="3" />
       {/* left leaf hinged at x=0 */}
       <line x1={0} y1={0} x2={hw} y2={0} stroke={wallStroke} strokeWidth="2"

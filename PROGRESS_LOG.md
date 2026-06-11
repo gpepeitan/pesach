@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-06-11 (continued) — Canvas navigation + bug fixes
+
+### Completed
+- **Mouse-wheel zoom** with cursor-anchored zoom — the point under the cursor stays put when you scroll. Range: 20%–400%.
+- **Pan everywhere**: hold <kbd>Space</kbd> and drag (or middle-click drag) to pan, even when the cursor is over an object. The previous "drag empty canvas to pan" still works.
+- **Cursor feedback**: changes to `grab` when Space is held, `crosshair` during calibration, `grabbing` while panning.
+- **Door selection hit area** (BUG fix): doors are stroke-only SVG primitives so the clickable area was a thin line. Added an invisible hit-area `<rect>` inside `DoorBody` that covers the slab + swing arc bounds. Doors now select reliably and the side panel surfaces their swing-direction / hinge-side / double-door controls.
+- **Calibration capture** (BUG fix): object handlers `stopPropagation()`, which meant clicks on the floor-plan image during calibration never reached the SVG handler. Added a transparent fullscreen `<rect data-bg="1">` that mounts only while calibrating — it captures every click and routes it to the calibration state machine.
+- **Help banner** updated to describe the new navigation gestures.
+
+### Next steps
+- Re-run the frontend testing agent (or eyeball manually) to confirm both bugs above are gone.
+
+---
+
 ## 2026-06-11 — Ballroom Canvas Phase 4
 
 ### Completed
