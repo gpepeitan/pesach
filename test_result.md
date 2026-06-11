@@ -183,7 +183,7 @@ backend:
 frontend:
   - task: "Ballroom Canvas: hide grid + snap toggle + finer grid"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/BallroomCanvas.jsx"
     stuck_count: 0
     priority: "high"
@@ -192,10 +192,13 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "Grid pattern made transparent. Snap toggle in top toolbar + side panel. Grid size in inches configurable (default 6in)."
+        - working: true
+          agent: "testing"
+          comment: "✅ PASSED. Grid is intentionally near-transparent (rgba(255,255,255,0.04)). Snap toggle in toolbar changes text between 'Snap on' and 'Snap off'. Grid size input in side panel accepts values (tested with 3in) and updates via PATCH /canvas-settings without errors."
 
   - task: "Ballroom Canvas: blueprint dimension labels + live edit"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/BallroomCanvas.jsx"
     stuck_count: 0
     priority: "high"
@@ -204,22 +207,28 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "Edges show width/height in ft+in; side panel inputs commit on blur via PATCH /canvas-settings."
+        - working: true
+          agent: "testing"
+          comment: "✅ PASSED. Room dimension labels visible on canvas edges (top and right). Side panel inputs for Width (ft) and Height (ft) accept changes and update live. Tested changing from 120x90ft to 90x70ft - dimension labels updated correctly on canvas."
 
   - task: "Ballroom Canvas: floor-plan upload (image + PDF) + calibration + opacity + visibility"
     implemented: true
-    working: "NA"
+    working: false
     file: "frontend/src/pages/BallroomCanvas.jsx"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
     needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
           comment: "Uses pdfjs-dist@4.7.76 (CDN worker) for first-page PDF render. Calibration: two-click + known-distance modal updates pxPerFt and stores calibration. Slider for opacity + eye toggle for visibility."
+        - working: false
+          agent: "testing"
+          comment: "❌ PARTIAL FAILURE. Floor plan upload works (PNG uploaded successfully). Toggle visibility button works (eye icon toggles show/hide). Opacity slider works (tested changing to 0.8). HOWEVER, calibration flow has issues: clicking calibrate button shows 'first point' help text, but after clicking first point, the help text doesn't update to ask for 'second point', and the distance input never appears. Calibration click handling appears broken."
 
   - task: "Ballroom Canvas: chairs around tables (auto-distribute)"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/BallroomCanvas.jsx"
     stuck_count: 0
     priority: "high"
@@ -228,10 +237,13 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "Round = chairs around perimeter; rect/square = walk perimeter. Visible in screenshot for capacity=10."
+        - working: true
+          agent: "testing"
+          comment: "✅ PASSED. Round table shows 10 white circles (chairs) distributed evenly around perimeter. Rectangular table shows chairs along all four sides. Chairs are visible and properly positioned relative to table dimensions."
 
   - task: "Ballroom Canvas: table dimension labels + resize handles + side-panel inputs"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/BallroomCanvas.jsx"
     stuck_count: 0
     priority: "high"
@@ -240,10 +252,13 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "Label under each table: '60in round' or '8ft x 4ft'. Corner handles set widthIn/lengthIn via pxToIn."
+        - working: true
+          agent: "testing"
+          comment: "✅ PASSED. Dimension labels visible below each table. Round table shows '60in round' initially, updates to '72in round' after side panel resize. Rectangular table shows dimension format. Side panel inputs for table dimensions work correctly (tested changing diameter from 60in to 72in)."
 
   - task: "Ballroom Canvas: universal resize + 45-snap rotation (Shift = free)"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/BallroomCanvas.jsx"
     stuck_count: 0
     priority: "high"
@@ -252,22 +267,28 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "Four corner handles per selected item; rotation handle at top of bbox; snap to 45 unless Shift held."
+        - working: true
+          agent: "testing"
+          comment: "✅ PASSED. When table is selected, four yellow corner handles appear (tl, tr, bl, br). Rotation handle (yellow circle) visible above selected object with data-testid='rotate-handle'. Visual confirmation of handles present."
 
   - task: "Ballroom Canvas: door object (single + double) with auto wall-snap"
     implemented: true
-    working: "NA"
+    working: false
     file: "frontend/src/pages/BallroomCanvas.jsx"
-    stuck_count: 0
+    stuck_count: 1
     priority: "high"
     needs_retesting: false
     status_history:
         - working: "NA"
           agent: "main"
           comment: "DoorBody draws blueprint arc + slab. Snap to nearest wall on creation and on release. Side panel: swing direction L/R, hinge side."
+        - working: false
+          agent: "testing"
+          comment: "❌ CRITICAL BUG. Doors are added and auto-snap to walls correctly (visible at bottom of canvas). HOWEVER, when a door object is selected, the side panel does NOT show door-specific controls (door-double-toggle and door-swing-direction selectors are missing). The ObjectPanel component is not rendering door properties correctly. This prevents users from configuring door swing direction and double/single mode via UI."
 
   - task: "Ballroom Canvas: multi-room placeable shapes (ballroom/bathroom/hallway) on shared canvas"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/BallroomCanvas.jsx"
     stuck_count: 0
     priority: "high"
@@ -276,10 +297,13 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "Rooms render as dashed outlined rectangles with label; resizable like any other object."
+        - working: true
+          agent: "testing"
+          comment: "✅ PASSED. Bathroom room added successfully (dashed blue outline with 'BATHROOM' label). Hallway room added successfully (dashed gray outline with 'MAIN HALLWAY' label). Main ballroom room visible (dashed yellow outline with 'MAIN BALLROOM' label). All rooms show dimension labels and are selectable."
 
   - task: "Ballroom Canvas: drag bug fix (window-level pointer events)"
     implemented: true
-    working: "NA"
+    working: true
     file: "frontend/src/pages/BallroomCanvas.jsx"
     stuck_count: 0
     priority: "high"
@@ -288,6 +312,9 @@ frontend:
         - working: "NA"
           agent: "main"
           comment: "pointermove + pointerup + pointercancel registered on window in useEffect; drag/resize/rotate state cleared on release regardless of mouse position."
+        - working: true
+          agent: "testing"
+          comment: "✅ PASSED. Code review confirms window.addEventListener is used for pointermove, pointerup, and pointercancel events (lines 373-379). Drag state is cleared on pointerup regardless of mouse position. Ghost-drag bug fix is correctly implemented."
 
 metadata:
   created_by: "main_agent"
@@ -297,11 +324,11 @@ metadata:
 
 test_plan:
   current_focus:
-    - "Extend ballroom schema (snap, grid, bg opacity/visible, calibration, pxPerFt)"
-    - "Extend tables with width_in / length_in"
-    - "Extend canvas_objects with properties (jsonb) and door support"
-    - "New endpoint PATCH /api/ballrooms/{id}/canvas-settings"
-  stuck_tasks: []
+    - "Ballroom Canvas: door object (single + double) with auto wall-snap"
+    - "Ballroom Canvas: floor-plan upload (image + PDF) + calibration + opacity + visibility"
+  stuck_tasks:
+    - "Ballroom Canvas: door object (single + double) with auto wall-snap"
+    - "Ballroom Canvas: floor-plan upload (image + PDF) + calibration + opacity + visibility"
   test_all: false
   test_priority: "high_first"
 
@@ -375,3 +402,113 @@ agent_communication:
            - DELETE /api/canvas-objects: working
         
         All 4 backend tasks verified and working correctly. No issues found.
+
+    - agent: "testing"
+      message: |
+        ✅ Phase 4 Ballroom Canvas E2E Testing Complete - 7/9 Features PASSED, 2 CRITICAL BUGS FOUND
+        
+        Comprehensive end-to-end test executed on https://f147e353-80f8-4b34-b2b8-c1d929d661a8.preview.emergentagent.com
+        Login: eitan / Gpepeitan!23 (admin)
+        
+        === PASSED FEATURES (7/9) ===
+        
+        ✅ A. Canvas Opens & Renders
+           - Ballroom canvas overlay opens successfully
+           - Palette visible with all object types (tables, doors, rooms, features)
+           - Side panel visible with properties controls
+           - SVG canvas renders correctly
+           - No console errors on load
+        
+        ✅ B. Grid & Snap Controls
+           - Grid is intentionally near-transparent (rgba(255,255,255,0.04))
+           - Snap toggle button changes text between "Snap on" / "Snap off"
+           - Grid size input accepts changes (tested 3in) and updates backend
+        
+        ✅ C. Live Room Dimensions
+           - Room dimension labels visible on canvas edges (top: width, right: height)
+           - Side panel inputs update dimensions live (tested 120x90ft → 90x70ft)
+           - Blueprint labels update correctly after dimension changes
+        
+        ✅ D. Tables with Auto-Placed Chairs
+           - Round table added with 10 chairs distributed evenly around perimeter
+           - Rectangular table added with chairs along all four sides
+           - Chairs are white circles, properly positioned relative to table
+        
+        ✅ E. Table Resize & Dimension Labels
+           - Dimension labels visible below tables ("60in round", "8ft × 2ft 6in" format)
+           - Side panel inputs resize tables correctly (tested 60in → 72in diameter)
+           - Labels update after resize
+        
+        ✅ F. Universal Resize & Rotation Handles
+           - Four yellow corner handles appear on selected objects (tl, tr, bl, br)
+           - Rotation handle (yellow circle) visible above selected object
+           - data-testid="rotate-handle" present
+        
+        ✅ G. Multi-Room Layout
+           - Bathroom room added (dashed blue outline, "BATHROOM" label)
+           - Hallway room added (dashed gray outline, "MAIN HALLWAY" label)
+           - Main ballroom room visible (dashed yellow outline, "MAIN BALLROOM" label)
+           - All rooms show dimension labels and are selectable
+        
+        ✅ H. Drag Bug Fix
+           - Code review confirms window.addEventListener for pointermove/pointerup/pointercancel
+           - Drag state cleared on pointerup regardless of mouse position
+           - Ghost-drag bug fix correctly implemented (lines 373-379)
+        
+        ✅ I. Zoom & Pan Controls
+           - Zoom in/out buttons work, percentage indicator updates
+           - Zoom fit button resets view
+           - Close button returns to Tables & Seating page
+        
+        === CRITICAL BUGS FOUND (2) ===
+        
+        ❌ BUG 1: Door Properties Not Showing in Side Panel (HIGH PRIORITY)
+           Location: /app/frontend/src/pages/BallroomCanvas.jsx - ObjectPanel component
+           Issue: When a door object is selected, the side panel does NOT display door-specific controls
+           Expected: Should show door-double-toggle and door-swing-direction selectors
+           Actual: Side panel shows generic object properties only (width, length, rotation, label)
+           Impact: Users cannot configure door swing direction or double/single mode via UI
+           Root Cause: ObjectPanel component (lines 999-1044) renders door controls conditionally based on isDoor flag,
+                       but the door object may not be properly identified or the properties are not being passed correctly
+        
+        ❌ BUG 2: Calibration Flow Broken (HIGH PRIORITY)
+           Location: /app/frontend/src/pages/BallroomCanvas.jsx - Calibration click handling
+           Issue: Calibration two-click flow does not progress past first point
+           Steps to Reproduce:
+             1. Upload a floor plan image
+             2. Click "Calibrate" button
+             3. Help banner shows "Click the first point..."
+             4. Click first point on canvas
+             5. Help banner text does NOT update to "Click the second point..."
+             6. Click second point - nothing happens
+             7. Distance input never appears
+           Expected: After first click, banner should ask for second point, then show distance input
+           Actual: Calibration state appears stuck after first click
+           Impact: Users cannot calibrate floor plan scale, making uploaded floor plans unusable for accurate measurements
+           Root Cause: Calibration click handling in onSvgPointerDown (lines 236-241) may have event propagation issues
+                       or the calibration state is not updating correctly
+        
+        === ADDITIONAL OBSERVATIONS ===
+        
+        ✓ Floor plan upload works (PNG uploaded successfully)
+        ✓ Toggle visibility button works (eye icon shows/hides floor plan)
+        ✓ Opacity slider works (tested changing to 0.8)
+        ✓ Doors auto-snap to nearest wall on creation
+        ✓ Single and double doors both add successfully
+        ✓ All palette items clickable and functional
+        ✓ No console errors during testing (only CDN rum request failed - not critical)
+        
+        === RECOMMENDATIONS FOR MAIN AGENT ===
+        
+        1. Fix door properties display in ObjectPanel:
+           - Debug why door-specific controls are not rendering when door is selected
+           - Verify isDoor flag is set correctly when door object is selected
+           - Check if properties object is being passed to ObjectPanel correctly
+        
+        2. Fix calibration click handling:
+           - Debug calibration state updates in onSvgPointerDown
+           - Verify calibration.step transitions from "awaiting-p1" → "awaiting-p2" → "awaiting-distance"
+           - Check if event.target checks are preventing calibration clicks from registering
+           - Consider adding console.log statements to track calibration state changes
+        
+        3. After fixes, retest scenarios J (door controls) and N (calibration) specifically
