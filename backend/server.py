@@ -697,6 +697,8 @@ class TableInput(BaseModel):
     canvasX: Optional[float] = 0
     canvasY: Optional[float] = 0
     rotation: Optional[float] = 0
+    widthIn: Optional[float] = None
+    lengthIn: Optional[float] = None
     notes: Optional[str] = None
 
 
@@ -709,6 +711,8 @@ class TableUpdateInput(BaseModel):
     canvasX: Optional[float] = None
     canvasY: Optional[float] = None
     rotation: Optional[float] = None
+    widthIn: Optional[float] = None
+    lengthIn: Optional[float] = None
     notes: Optional[str] = None
 
 
@@ -734,6 +738,12 @@ def ballroom_to_api(b) -> dict:
             "heightFt": float(b["height_ft"]) if b["height_ft"] is not None else None,
             "backgroundImageUrl": b["background_image_url"],
             "scaleFactor": float(b["scale_factor"]) if b["scale_factor"] is not None else 1.0,
+            "snapEnabled": bool(b["snap_enabled"]) if "snap_enabled" in b.keys() and b["snap_enabled"] is not None else True,
+            "gridSizeIn": float(b["grid_size_in"]) if "grid_size_in" in b.keys() and b["grid_size_in"] is not None else 6.0,
+            "bgOpacity": float(b["bg_opacity"]) if "bg_opacity" in b.keys() and b["bg_opacity"] is not None else 0.55,
+            "bgVisible": bool(b["bg_visible"]) if "bg_visible" in b.keys() and b["bg_visible"] is not None else True,
+            "bgCalibration": (b["bg_calibration"] if "bg_calibration" in b.keys() and b["bg_calibration"] is not None else {}),
+            "pxPerFt": float(b["px_per_ft"]) if "px_per_ft" in b.keys() and b["px_per_ft"] is not None else 12.0,
             "createdAt": b["created_at"].isoformat()}
 
 
@@ -746,6 +756,8 @@ def table_to_api(t, seated=0) -> dict:
             "canvasX": float(t["canvas_x"]) if t["canvas_x"] is not None else 0,
             "canvasY": float(t["canvas_y"]) if t["canvas_y"] is not None else 0,
             "rotation": float(t["rotation"]) if t["rotation"] is not None else 0,
+            "widthIn": float(t["width_in"]) if "width_in" in t.keys() and t["width_in"] is not None else 60.0,
+            "lengthIn": float(t["length_in"]) if "length_in" in t.keys() and t["length_in"] is not None else 60.0,
             "notes": t["notes"]}
 
 
@@ -790,6 +802,17 @@ class FloorPlanInput(BaseModel):
     scaleFactor: Optional[float] = None
 
 
+class CanvasSettingsInput(BaseModel):
+    snapEnabled: Optional[bool] = None
+    gridSizeIn: Optional[float] = None
+    bgOpacity: Optional[float] = None
+    bgVisible: Optional[bool] = None
+    bgCalibration: Optional[dict] = None  # { p1x, p1y, p2x, p2y, knownFt }
+    pxPerFt: Optional[float] = None
+    widthFt: Optional[float] = None
+    heightFt: Optional[float] = None
+
+
 @api.patch("/ballrooms/{ballroom_id}/floor-plan")
 async def set_floor_plan(ballroom_id: int, body: FloorPlanInput, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     sets, params = [], {"i": ballroom_id}
@@ -805,15 +828,40 @@ async def set_floor_plan(ballroom_id: int, body: FloorPlanInput, user: dict = De
     return ballroom_to_api(row)
 
 
+@api.patch("/ballrooms/{ballroom_id}/canvas-settings")
+async def set_canvas_settings(ballroom_id: int, body: CanvasSettingsInput, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    import json as _json
+    mapping = {
+        "snapEnabled": "snap_enabled", "gridSizeIn": "grid_size_in",
+        "bgOpacity": "bg_opacity", "bgVisible": "bg_visible",
+        "pxPerFt": "px_per_ft", "widthFt": "width_ft", "heightFt": "height_ft",
+    }
+    sets, params = [], {"i": ballroom_id}
+    for k, col in mapping.items():
+        v = getattr(body, k)
+        if v is not None:
+            sets.append(f"{col}=:{col}"); params[col] = v
+    if body.bgCalibration is not None:
+        sets.append("bg_calibration=CAST(:bgc AS jsonb)"); params["bgc"] = _json.dumps(body.bgCalibration)
+    if not sets: raise HTTPException(400, "Nothing to update")
+    row = (await db.execute(text(f"UPDATE ballrooms SET {', '.join(sets)} WHERE id=:i RETURNING *"), params)).mappings().first()
+    if not row: raise HTTPException(404, "Ballroom not found")
+    await log_activity(db, user, "ballroom_canvas_settings_update", ballroom_id=ballroom_id,
+                       details=body.model_dump(exclude_none=True))
+    await db.commit()
+    return ballroom_to_api(row)
+
+
 class CanvasObjectInput(BaseModel):
     ballroomId: int
-    objectType: str  # 'stage' | 'dance_floor' | 'bar' | 'buffet' | 'carving' | 'pillar' | 'entrance' | 'exit' | 'blocker' | 'wall'
+    objectType: str  # 'stage' | 'dance_floor' | 'bar' | 'buffet' | 'carving' | 'pillar' | 'entrance' | 'exit' | 'blocker' | 'wall' | 'door' | 'room_ballroom' | 'room_bathroom' | 'room_hallway' | 'sign' | 'marker'
     label: Optional[str] = None
     x: float = 0
     y: float = 0
     width: float = 80
     height: float = 80
     rotation: float = 0
+    properties: Optional[dict] = None
 
 
 class CanvasObjectUpdate(BaseModel):
@@ -823,15 +871,18 @@ class CanvasObjectUpdate(BaseModel):
     width: Optional[float] = None
     height: Optional[float] = None
     rotation: Optional[float] = None
+    properties: Optional[dict] = None
 
 
 def canvas_obj_to_api(o) -> dict:
     pos = o["position"] or {}; dim = o["dimensions"] or {}
+    props = o["properties"] if "properties" in o.keys() and o["properties"] is not None else {}
     return {"id": o["id"], "ballroomId": o["ballroom_id"], "objectType": o["object_type"],
             "label": o["label"],
             "x": float(pos.get("x", 0)), "y": float(pos.get("y", 0)),
             "width": float(dim.get("width", 80)), "height": float(dim.get("height", 80)),
-            "rotation": float(o["rotation"] or 0)}
+            "rotation": float(o["rotation"] or 0),
+            "properties": props}
 
 
 @api.get("/ballrooms/{ballroom_id}/canvas-objects")
@@ -846,12 +897,13 @@ async def list_canvas_objects(ballroom_id: int, user: dict = Depends(get_current
 async def create_canvas_object(body: CanvasObjectInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     import json as _json
     row = (await db.execute(text("""
-        INSERT INTO canvas_objects (ballroom_id, object_type, label, position, dimensions, rotation)
-        VALUES (:b, :t, :l, CAST(:p AS jsonb), CAST(:d AS jsonb), :r) RETURNING *
+        INSERT INTO canvas_objects (ballroom_id, object_type, label, position, dimensions, rotation, properties)
+        VALUES (:b, :t, :l, CAST(:p AS jsonb), CAST(:d AS jsonb), :r, CAST(:pr AS jsonb)) RETURNING *
     """), {"b": body.ballroomId, "t": body.objectType, "l": body.label,
            "p": _json.dumps({"x": body.x, "y": body.y}),
            "d": _json.dumps({"width": body.width, "height": body.height}),
-           "r": body.rotation})).mappings().first()
+           "r": body.rotation,
+           "pr": _json.dumps(body.properties or {})})).mappings().first()
     await log_activity(db, user, "canvas_object_create", ballroom_id=body.ballroomId, details={"type": body.objectType})
     await db.commit()
     return canvas_obj_to_api(row)
@@ -873,6 +925,11 @@ async def update_canvas_object(obj_id: int, body: CanvasObjectUpdate, user: dict
     }
     if body.label is not None: sets.append("label=:l"); params["l"] = body.label
     if body.rotation is not None: sets.append("rotation=:r"); params["r"] = body.rotation
+    if body.properties is not None:
+        # merge into existing
+        existing = dict(cur["properties"] or {}) if "properties" in cur.keys() else {}
+        existing.update(body.properties)
+        sets.append("properties=CAST(:pr AS jsonb)"); params["pr"] = _json.dumps(existing)
     row = (await db.execute(text(f"UPDATE canvas_objects SET {', '.join(sets)} WHERE id=:i RETURNING *"), params)).mappings().first()
     await db.commit()
     return canvas_obj_to_api(row)
@@ -910,12 +967,19 @@ async def list_tables(
 
 @api.post("/tables", status_code=201)
 async def create_table(body: TableInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # default dimensions if not provided
+    w_in = body.widthIn if body.widthIn is not None else (60.0 if body.shape == "round" else 96.0)
+    l_in = body.lengthIn if body.lengthIn is not None else (60.0 if body.shape == "round" else 48.0)
+    if body.shape == "square":
+        # square = equal sides
+        l_in = w_in
     row = (await db.execute(text("""
-        INSERT INTO tables (table_number, label, ballroom_id, shape, max_capacity, canvas_x, canvas_y, rotation, notes)
-        VALUES (:n, :l, :br, :sh, :c, :x, :y, :r, :nt) RETURNING *
+        INSERT INTO tables (table_number, label, ballroom_id, shape, max_capacity,
+                            canvas_x, canvas_y, rotation, notes, width_in, length_in)
+        VALUES (:n, :l, :br, :sh, :c, :x, :y, :r, :nt, :wi, :li) RETURNING *
     """), {"n": body.tableNumber, "l": body.label, "br": body.ballroomId, "sh": body.shape,
            "c": body.maxCapacity, "x": body.canvasX or 0, "y": body.canvasY or 0,
-           "r": body.rotation or 0, "nt": body.notes})).mappings().first()
+           "r": body.rotation or 0, "nt": body.notes, "wi": w_in, "li": l_in})).mappings().first()
     await log_activity(db, user, "table_create", table_id=row["id"], ballroom_id=body.ballroomId,
                        details={"number": body.tableNumber, "capacity": body.maxCapacity})
     await db.commit()
@@ -926,7 +990,8 @@ async def create_table(body: TableInput, user: dict = Depends(get_current_user),
 async def update_table(table_id: int, body: TableUpdateInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     mapping = {"tableNumber": "table_number", "label": "label", "ballroomId": "ballroom_id",
                "shape": "shape", "maxCapacity": "max_capacity", "canvasX": "canvas_x",
-               "canvasY": "canvas_y", "rotation": "rotation", "notes": "notes"}
+               "canvasY": "canvas_y", "rotation": "rotation", "notes": "notes",
+               "widthIn": "width_in", "lengthIn": "length_in"}
     sets, params = [], {"id": table_id}
     for k, col in mapping.items():
         v = getattr(body, k)
