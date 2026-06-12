@@ -112,6 +112,59 @@
 
 ---
 
+## Phase 6 — Canvas UX & Ops Polish (DONE 2026-02)
+
+### Drag & UX hardening
+- [x] Sticky drag bug — window-level pointermove/up/cancel + blur/visibility/Escape resets
+- [x] Palette → cursor-drop (HTML5 drag-and-drop); click-to-center kept as fallback
+- [x] Pan from any empty area (no spacebar required)
+- [x] Ctrl/Cmd+click multi-select; sky-blue dashed halo
+- [x] Delete/Backspace key + toolbar trash button removes selection
+- [x] Undo / redo persisted per staff (DB-backed action_history)
+- [x] Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z bound globally + in canvas
+- [ ] Smart Figma-style alignment guides (deferred to Phase 6 backlog)
+
+### Canvas objects & tools
+- [x] Divider line tool (palette-line) — draggable, resizable, rotatable
+- [x] Text label tool (palette-text) — double-click to edit text
+- [x] Table numbers auto-increment from 1 on each placement
+
+### Canvas table interaction
+- [x] Click → multi-select; double-click → existing table detail modal
+- [x] Detail modal already shows table number, shape, dims, capacity, families, prefs, HC
+
+### Guest List on canvas
+- [x] Floating "Guest List" side panel (toggle via toolbar Users icon)
+- [x] Drag family card onto table → /api/guests/family/move
+
+### Conflict detection
+- [x] /api/seating/conflicts: over_capacity (group-aware), family_split, near_family_not_at_same_table, one_way_preference
+- [x] Red dot badge on canvas tables for any conflict
+
+### Guest list improvements
+- [x] Inline family-move dropdown (Phase 4.5)
+- [x] Guest drawer edits invoice / family_id / near_family_id / preferences / table assign
+
+### Analytics dashboard
+- [x] /api/analytics/summary with all 10 metrics
+- [x] Analytics tab in dashboard
+
+### PDF export
+- [x] "Print" button exports clean floor-plan PDF + master seating list sorted by last name (jsPDF + html-to-image)
+
+### Persistence
+- [x] All new endpoints write to Supabase in real time; existing per-action saves trusted
+
+---
+
+## Phase 6 Backlog (not built yet)
+- [ ] Smart alignment guides (Figma / Google Slides style snap lines)
+- [ ] Printable per-table centerpiece cards
+- [ ] Year-to-year archive + reset tool
+- [ ] WebSocket live collaborative editing with soft locks
+
+---
+
 ## Phase 5 — Commercial Readiness (NEXT)
 
 The full brief is preserved in [`FUTURE_COMMERCIAL_READINESS.md`](./FUTURE_COMMERCIAL_READINESS.md).

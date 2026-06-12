@@ -65,9 +65,21 @@ Originally bootstrapped in Replit on Node/Express/Postgres/Drizzle. Ported to Em
 All Phase 1 + 2 + future-phase tables created: `guests`, `staff_users`, `staff_notes`, `preference_resolutions`, `ballrooms`, `tables`, `seat_assignments`, `canvas_objects`, `activity_log`, `archives`.
 
 ## Test Status
-- **Backend:** 125/125 pytest cases pass (Phase 1+2: 39 + Phase 3: 31 + Roster: 19 + Phase 4: 12 + Phase 4.5: 24)
-- **Frontend:** All critical flows verified via Playwright across 5 testing iterations
-- **Bugs fixed during iterations:** (i1) Dashboard.jsx useEffect-returning-Promise; (i2) server.py preference-match tuple-row access; (i3) db.py ALTER TABLE ordering; (i4) BallroomCanvas.jsx nullish-coalescing precedence on drag offset
+- **Backend:** 136/136 pytest cases pass (Phase 1+2: 39 + Phase 3: 31 + Roster: 19 + Phase 4: 12 + Phase 4.5: 24 + Phase 6: 11)
+- **Frontend:** All Phase-6 flows verified via Playwright (iteration_6.json)
+- **Bugs fixed during iterations:** (i1-i4 prior) + (i6) group-aware over-capacity conflict detection; family_split byTableId multi-tagging
+
+## Phase 6 — Canvas UX & Ops Polish (2026-02)
+**Shipped:**
+- DB-backed undo/redo per staff (`action_history` table). Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z global + canvas.
+- Conflict detection (`/api/seating/conflicts`): over_capacity (group-aware), family_split, near_family_not_at_same_table, one_way_preference. Red-dot badge on canvas tables.
+- Analytics tab with 10 metrics (`/api/analytics/summary`).
+- Palette: **divider line** + **text label** tools. HTML5 drag-from-palette drops at cursor; click-to-centre kept as fallback.
+- Ctrl/Cmd+click multi-select, Delete/Backspace key + trash toolbar button.
+- Floating canvas guest panel — drag family cards onto tables to seat the whole family.
+- Guest drawer edit: invoice, family_id, near_family_id, seating preferences, table reassign.
+- PDF export (jsPDF + html-to-image): clean floor-plan page + master seating list sorted by last name.
+- Sticky drag bug hardened (window pointer listeners + blur/visibility/Escape resets).
 
 ## Phase 4.5 — Automated Seating & Inventory Logic (2026-02)
 **Shipped:**

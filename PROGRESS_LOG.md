@@ -90,3 +90,34 @@
 - backend: `server.py`, `db.py`, `requirements.txt` (`openpyxl`)
 - frontend: `Dashboard.jsx`, `BallroomCanvas.jsx`, `StaffLogin.jsx`, `lib/auth.jsx`, new `TableInventoryTab.jsx`, new `components/GuestBulkActions.jsx`
 - env: `backend/.env` (DATABASE_URL = Supabase pooler, DEV_AUTH_BYPASS=1)
+
+## 2026-02-12 — Phase 6: Canvas UX & Ops Polish
+
+**Scope shipped:**
+- Persisted undo/redo per staff via /api/history/{undo,redo,stack} + DB-backed action_history table. Ctrl+Z and Ctrl+Y/Ctrl+Shift+Z bound globally and on the canvas.
+- Conflict detection endpoint (/api/seating/conflicts) — over_capacity (group-aware), family_split (multi-table tagging), near_family_not_at_same_table, one_way_preference. Red dot badge on canvas tables.
+- Analytics tab with 10 cards backed by /api/analytics/summary.
+- Canvas palette: divider line + text label tools (double-click to edit text). HTML5 drag-from-palette drops at cursor; click-to-center fallback retained.
+- Ctrl/Cmd+click multi-select + Delete/Backspace + toolbar trash button.
+- Floating canvas guest panel (toggleable). Drag family cards onto tables → /api/guests/family/move seats the whole family.
+- Guest drawer edit mode: invoice, family_id, near_family_id, preferences, table assignment.
+- PDF export (jsPDF + html-to-image): clean floor-plan page + master seating list sorted by last name.
+- Sticky drag bug hardened: window-level pointermove/up/cancel + blur/visibilitychange/Escape resets stuck drag state.
+
+**Bug fixed during review (testing-agent flag):**
+- Group-aware over-capacity detection now aggregates seated count across grouped tables before comparing to combined capacity; family_split conflicts now tag every affected table.
+
+**Tests:** backend/tests/test_phase6.py + backend/tests/test_phase6_extended.py → 11/11 passing. Frontend Phase-6 surfaces verified by testing agent (iteration_6.json).
+
+**Files touched:**
+- backend: server.py, db.py
+- frontend: BallroomCanvas.jsx, Dashboard.jsx (analytics tab, global undo/redo header, guest drawer edit)
+- frontend new components: CanvasGuestPanel inside BallroomCanvas.jsx, AnalyticsTab inside Dashboard.jsx
+- backend tests: tests/test_phase6.py (new), tests/test_phase6_extended.py (added by testing agent)
+- docs: CHANGELOG.md (new), TASKS.md, PROGRESS_LOG.md, PRD.md
+
+**Phase-6 backlog (intentionally deferred):**
+- Smart Figma-style alignment guides
+- Printable centerpiece cards (per-table guest sheets)
+- Year-to-year archive + reset tool
+- WebSocket live collaborative editing with soft locks

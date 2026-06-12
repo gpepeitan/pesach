@@ -1889,24 +1889,43 @@ async def list_conflicts(ballroomId: Optional[int] = None,
         if g["family_id"]:
             by_family.setdefault(g["family_id"], []).append(dict(g))
         name_index[g["full_name"].lower()] = dict(g)
-    # group capacity
+    # group capacity + group seated (aggregate across all tables sharing a group_id)
     group_cap: dict = {}
+    group_seated: dict = {}
+    group_tables: dict = {}
     for t in tables:
         if t["group_id"]:
-            group_cap[t["group_id"]] = group_cap.get(t["group_id"], 0) + int(t["max_capacity"] or 0)
+            gid = t["group_id"]
+            group_cap[gid] = group_cap.get(gid, 0) + int(t["max_capacity"] or 0)
+            group_seated[gid] = group_seated.get(gid, 0) + int(seated_per_t.get(t["id"], 0))
+            group_tables.setdefault(gid, []).append(t["id"])
 
     conflicts: List[dict] = []
-    # over capacity
+    # over capacity — solo tables (no group): per-table check
     for tid, seated in seated_per_t.items():
         t = by_tid.get(tid)
-        if not t: continue
-        eff = group_cap.get(t["group_id"]) if t["group_id"] else int(t["max_capacity"] or 0)
-        if seated > eff:
+        if not t or t["group_id"]: continue  # grouped tables checked below
+        cap = int(t["max_capacity"] or 0)
+        if seated > cap:
             conflicts.append({
                 "type": "over_capacity", "tableId": tid,
-                "tableNumber": t["table_number"], "seated": seated, "capacity": eff,
-                "message": f"Table {t['table_number']} has {seated} guests but seats {eff}",
+                "tableNumber": t["table_number"], "seated": seated, "capacity": cap,
+                "message": f"Table {t['table_number']} has {seated} guests but seats {cap}",
             })
+    # over capacity — combined groups: aggregate across all member tables, emit one conflict
+    # entry per member table so the red dot shows on each of them.
+    for gid, total_seated in group_seated.items():
+        cap = group_cap.get(gid, 0)
+        if total_seated > cap:
+            for tid in group_tables.get(gid, []):
+                t = by_tid.get(tid)
+                if not t: continue
+                conflicts.append({
+                    "type": "over_capacity", "tableId": tid,
+                    "tableNumber": t["table_number"], "seated": total_seated, "capacity": cap,
+                    "groupId": gid,
+                    "message": f"Combined group has {total_seated} guests but seats {cap}",
+                })
     # family split (members at different tables AND tables don't share a group_id)
     for fid, members in by_family.items():
         tids = {m["table_id"] for m in members}
@@ -1952,12 +1971,14 @@ async def list_conflicts(ballroomId: Optional[int] = None,
                     "message": f"{g['full_name']} requested {target['full_name']} but not vice versa",
                 })
 
-    # group by table
+    # group by table — family_split attaches to all affected tables
     by_table_id: dict = {}
     for c in conflicts:
-        tid = c.get("tableId") or (c.get("tableIds")[0] if c.get("tableIds") else None)
-        if tid:
-            by_table_id.setdefault(tid, []).append(c)
+        if c.get("tableIds"):
+            for tid in c["tableIds"]:
+                by_table_id.setdefault(tid, []).append(c)
+        elif c.get("tableId"):
+            by_table_id.setdefault(c["tableId"], []).append(c)
     return {"conflicts": conflicts, "byTableId": by_table_id, "count": len(conflicts)}
 
 
