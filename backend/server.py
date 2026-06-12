@@ -10,6 +10,7 @@ load_dotenv(Path(__file__).parent / ".env")
 import os
 import bcrypt
 import jwt
+import json
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List
@@ -134,6 +135,8 @@ class GuestUpdateInput(BaseModel):
     familyId: Optional[str] = None
     nearFamilyId: Optional[str] = None
     tableId: Optional[int] = None
+    invoiceNumber: Optional[str] = None
+    seatingPreferences: Optional[List[str]] = None
 
 
 # ---------- serializers ----------
@@ -545,14 +548,18 @@ async def get_guest(guest_id: int, user: dict = Depends(get_current_user), db: A
 
 @api.patch("/guests/{guest_id}")
 async def update_guest(guest_id: int, body: GuestUpdateInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    before = (await db.execute(text("SELECT * FROM guests WHERE id=:i"), {"i": guest_id})).mappings().first()
+    if not before: raise HTTPException(404, "Guest not found")
     sets, params = [], {"id": guest_id}
     mapping = {"fullName": "full_name", "partySize": "party_size", "highChairNeeded": "high_chair_needed",
                "highChairCount": "high_chair_count", "specialNotes": "special_notes", "isDuplicate": "is_duplicate",
-               "familyId": "family_id", "nearFamilyId": "near_family_id"}
+               "familyId": "family_id", "nearFamilyId": "near_family_id",
+               "invoiceNumber": "invoice_number"}
     for k, col in mapping.items():
         v = getattr(body, k)
         if v is not None: sets.append(f"{col}=:{col}"); params[col] = v
-    # tableId handled specially (also updates ballroom_id + status)
+    if body.seatingPreferences is not None:
+        sets.append("seating_preferences=:sprefs"); params["sprefs"] = list(body.seatingPreferences)[:5]
     if body.tableId is not None:
         if body.tableId == 0:
             sets.append("table_id=NULL"); sets.append("ballroom_id=NULL"); sets.append("status='unassigned'")
@@ -564,8 +571,9 @@ async def update_guest(guest_id: int, body: GuestUpdateInput, user: dict = Depen
     if not sets: raise HTTPException(400, "No fields to update")
     sets.append("last_updated_timestamp=NOW()")
     row = (await db.execute(text(f"UPDATE guests SET {', '.join(sets)} WHERE id=:id RETURNING *"), params)).mappings().first()
-    if not row: raise HTTPException(404, "Guest not found")
     await log_activity(db, user, "guest_update", guest_id=guest_id, details=body.model_dump(exclude_none=True))
+    await record_history(db, user, "guests", "guest_update", "guest", str(guest_id),
+                         _guest_snap(before), _guest_snap(row))
     await db.commit()
     return guest_to_api(row)
 
@@ -952,6 +960,8 @@ async def update_canvas_object(obj_id: int, body: CanvasObjectUpdate, user: dict
         existing.update(body.properties)
         sets.append("properties=CAST(:pr AS jsonb)"); params["pr"] = _json.dumps(existing)
     row = (await db.execute(text(f"UPDATE canvas_objects SET {', '.join(sets)} WHERE id=:i RETURNING *"), params)).mappings().first()
+    await record_history(db, user, "canvas", "canvas_object_update", "canvas_object", str(obj_id),
+                         _obj_snap(cur), _obj_snap(row))
     await db.commit()
     return canvas_obj_to_api(row)
 
@@ -1017,6 +1027,8 @@ async def create_table(body: TableInput, user: dict = Depends(get_current_user),
 
 @api.patch("/tables/{table_id}")
 async def update_table(table_id: int, body: TableUpdateInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    before = (await db.execute(text("SELECT * FROM tables WHERE id=:i"), {"i": table_id})).mappings().first()
+    if not before: raise HTTPException(404, "Table not found")
     mapping = {"tableNumber": "table_number", "label": "label", "ballroomId": "ballroom_id",
                "shape": "shape", "maxCapacity": "max_capacity", "canvasX": "canvas_x",
                "canvasY": "canvas_y", "rotation": "rotation", "notes": "notes",
@@ -1028,9 +1040,10 @@ async def update_table(table_id: int, body: TableUpdateInput, user: dict = Depen
         if v is not None: sets.append(f"{col}=:{col}"); params[col] = v
     if not sets: raise HTTPException(400, "No fields to update")
     row = (await db.execute(text(f"UPDATE tables SET {', '.join(sets)} WHERE id=:id RETURNING *"), params)).mappings().first()
-    if not row: raise HTTPException(404, "Table not found")
     seated = (await db.execute(text("SELECT COALESCE(SUM(party_size),0) FROM guests WHERE table_id=:i"), {"i": table_id})).scalar()
     await log_activity(db, user, "table_update", table_id=table_id, details=body.model_dump(exclude_none=True))
+    await record_history(db, user, "canvas", "table_update", "table", str(table_id),
+                         _table_snap(before), _table_snap(row))
     await db.commit()
     return table_to_api(row, int(seated))
 
@@ -1673,6 +1686,319 @@ async def move_family(body: FamilyMoveBody, user: dict = Depends(get_current_use
                        details={"familyId": fid, "memberCount": len(members)})
     await db.commit()
     return {"ok": True, "movedCount": len(members), "familyId": fid}
+
+
+# ---------- ACTION HISTORY (undo / redo) ----------
+def _guest_snap(row) -> dict:
+    if not row: return None
+    return {
+        "id": row["id"], "full_name": row["full_name"], "invoice_number": row["invoice_number"],
+        "party_size": row["party_size"], "seating_preferences": list(row["seating_preferences"] or []),
+        "high_chair_needed": row["high_chair_needed"], "high_chair_count": row["high_chair_count"],
+        "status": row["status"], "ballroom_id": row["ballroom_id"], "table_id": row["table_id"],
+        "special_notes": row["special_notes"], "is_duplicate": row["is_duplicate"],
+        "family_id": row["family_id"] if "family_id" in row.keys() else None,
+        "near_family_id": row["near_family_id"] if "near_family_id" in row.keys() else None,
+    }
+
+def _table_snap(row) -> dict:
+    if not row: return None
+    return {
+        "id": row["id"], "table_number": row["table_number"], "label": row["label"],
+        "ballroom_id": row["ballroom_id"], "shape": row["shape"], "max_capacity": row["max_capacity"],
+        "canvas_x": float(row["canvas_x"] or 0), "canvas_y": float(row["canvas_y"] or 0),
+        "rotation": float(row["rotation"] or 0),
+        "width_in": float(row["width_in"]) if row["width_in"] is not None else None,
+        "length_in": float(row["length_in"]) if row["length_in"] is not None else None,
+        "notes": row["notes"],
+        "type_id": row["type_id"] if "type_id" in row.keys() else None,
+        "group_id": row["group_id"] if "group_id" in row.keys() else None,
+    }
+
+def _obj_snap(row) -> dict:
+    if not row: return None
+    pos = row["position"] or {}; dim = row["dimensions"] or {}
+    return {
+        "id": row["id"], "ballroom_id": row["ballroom_id"], "object_type": row["object_type"],
+        "label": row["label"],
+        "x": float(pos.get("x", 0)), "y": float(pos.get("y", 0)),
+        "width": float(dim.get("width", 80)), "height": float(dim.get("height", 80)),
+        "rotation": float(row["rotation"] or 0),
+        "properties": row["properties"] or {},
+    }
+
+async def record_history(db: AsyncSession, user: dict, scope: str, action_type: str,
+                         target_type: str, target_id: Optional[str],
+                         before: Optional[dict], after: Optional[dict]) -> None:
+    """Append an undo-able action to history. Truncates the redo stack (anything is_undone)."""
+    try:
+        sid = user["id"] if isinstance(user, dict) and "id" in user else user.get("id") if hasattr(user, "get") else None
+        # whenever a NEW action is recorded, purge any redo-able (is_undone) actions further up the stack
+        if sid is not None:
+            await db.execute(text(
+                "DELETE FROM action_history WHERE staff_id=:s AND is_undone=TRUE"
+            ), {"s": sid})
+        await db.execute(text("""
+            INSERT INTO action_history (staff_id, scope, action_type, target_type, target_id,
+                                        before_state, after_state)
+            VALUES (:s, :sc, :a, :tt, :ti, CAST(:b AS jsonb), CAST(:af AS jsonb))
+        """), {"s": sid, "sc": scope, "a": action_type, "tt": target_type, "ti": target_id,
+                "b": json.dumps(before) if before is not None else None,
+                "af": json.dumps(after) if after is not None else None})
+    except Exception as ex:
+        # never fail the main action because of history bookkeeping
+        logger.warning(f"record_history failed: {ex}")
+
+
+async def _apply_snap_guest(db: AsyncSession, snap: dict) -> None:
+    if not snap: return
+    await db.execute(text("""
+        UPDATE guests SET full_name=:n, invoice_number=:i, party_size=:p,
+            seating_preferences=:pf, high_chair_needed=:hcn, high_chair_count=:hcc,
+            status=:st, ballroom_id=:b, table_id=:t, special_notes=:sn,
+            is_duplicate=:dp, family_id=:fid, near_family_id=:nfid,
+            last_updated_timestamp=NOW() WHERE id=:gid
+    """), {"n": snap["full_name"], "i": snap["invoice_number"], "p": snap["party_size"],
+            "pf": snap["seating_preferences"], "hcn": snap["high_chair_needed"],
+            "hcc": snap["high_chair_count"], "st": snap["status"], "b": snap["ballroom_id"],
+            "t": snap["table_id"], "sn": snap["special_notes"], "dp": snap["is_duplicate"],
+            "fid": snap.get("family_id"), "nfid": snap.get("near_family_id"),
+            "gid": snap["id"]})
+
+async def _apply_snap_table(db: AsyncSession, snap: dict) -> None:
+    if not snap: return
+    await db.execute(text("""
+        UPDATE tables SET table_number=:n, label=:l, ballroom_id=:b, shape=:s,
+            max_capacity=:c, canvas_x=:x, canvas_y=:y, rotation=:r, width_in=:wi,
+            length_in=:li, notes=:nt, type_id=:ti, group_id=:gi
+        WHERE id=:id
+    """), {"id": snap["id"], "n": snap["table_number"], "l": snap["label"],
+            "b": snap["ballroom_id"], "s": snap["shape"], "c": snap["max_capacity"],
+            "x": snap["canvas_x"], "y": snap["canvas_y"], "r": snap["rotation"],
+            "wi": snap["width_in"], "li": snap["length_in"], "nt": snap["notes"],
+            "ti": snap.get("type_id"), "gi": snap.get("group_id")})
+
+async def _apply_snap_object(db: AsyncSession, snap: dict) -> None:
+    if not snap: return
+    await db.execute(text("""
+        UPDATE canvas_objects SET label=:l, position=CAST(:p AS jsonb),
+            dimensions=CAST(:d AS jsonb), rotation=:r, properties=CAST(:pr AS jsonb)
+        WHERE id=:id
+    """), {"id": snap["id"], "l": snap["label"],
+            "p": json.dumps({"x": snap["x"], "y": snap["y"]}),
+            "d": json.dumps({"width": snap["width"], "height": snap["height"]}),
+            "r": snap["rotation"],
+            "pr": json.dumps(snap["properties"] or {})})
+
+async def _apply_history_state(db: AsyncSession, action_row, *, redo: bool) -> dict:
+    """Apply before_state (undo) or after_state (redo) of an action."""
+    snap = action_row["after_state"] if redo else action_row["before_state"]
+    if snap is None and not redo:
+        # action created the row → undo means delete
+        await _delete_target(db, action_row["target_type"], action_row["target_id"])
+        return {"deleted": action_row["target_type"], "id": action_row["target_id"]}
+    tt = action_row["target_type"]
+    if tt == "guest":   await _apply_snap_guest(db, snap)
+    elif tt == "table": await _apply_snap_table(db, snap)
+    elif tt == "canvas_object": await _apply_snap_object(db, snap)
+    return {"applied": tt, "id": action_row["target_id"]}
+
+async def _delete_target(db: AsyncSession, target_type: str, target_id: str) -> None:
+    if not target_id: return
+    tbl = {"guest": "guests", "table": "tables", "canvas_object": "canvas_objects"}.get(target_type)
+    if not tbl: return
+    try:
+        await db.execute(text(f"DELETE FROM {tbl} WHERE id=:i"), {"i": int(target_id)})
+    except Exception:
+        pass
+
+
+@api.post("/history/undo")
+async def history_undo(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(text("""
+        SELECT * FROM action_history WHERE staff_id=:s AND is_undone=FALSE
+        ORDER BY created_at DESC LIMIT 1
+    """), {"s": user["id"]})).mappings().first()
+    if not row:
+        return {"ok": False, "reason": "no_actions"}
+    res = await _apply_history_state(db, row, redo=False)
+    await db.execute(text("UPDATE action_history SET is_undone=TRUE WHERE id=:i"), {"i": row["id"]})
+    await db.commit()
+    return {"ok": True, "actionId": row["id"], "actionType": row["action_type"],
+            "scope": row["scope"], "targetType": row["target_type"], "result": res}
+
+
+@api.post("/history/redo")
+async def history_redo(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    row = (await db.execute(text("""
+        SELECT * FROM action_history WHERE staff_id=:s AND is_undone=TRUE
+        ORDER BY created_at ASC LIMIT 1
+    """), {"s": user["id"]})).mappings().first()
+    if not row:
+        return {"ok": False, "reason": "no_actions"}
+    res = await _apply_history_state(db, row, redo=True)
+    await db.execute(text("UPDATE action_history SET is_undone=FALSE WHERE id=:i"), {"i": row["id"]})
+    await db.commit()
+    return {"ok": True, "actionId": row["id"], "actionType": row["action_type"],
+            "scope": row["scope"], "targetType": row["target_type"], "result": res}
+
+
+@api.get("/history/stack")
+async def history_stack(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    undo_count = (await db.execute(text(
+        "SELECT COUNT(*) FROM action_history WHERE staff_id=:s AND is_undone=FALSE"
+    ), {"s": user["id"]})).scalar()
+    redo_count = (await db.execute(text(
+        "SELECT COUNT(*) FROM action_history WHERE staff_id=:s AND is_undone=TRUE"
+    ), {"s": user["id"]})).scalar()
+    return {"undoAvailable": int(undo_count or 0), "redoAvailable": int(redo_count or 0)}
+
+
+# ---------- CONFLICT DETECTION ----------
+@api.get("/seating/conflicts")
+async def list_conflicts(ballroomId: Optional[int] = None,
+                          user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Return seating conflicts grouped per table.
+    Types:
+      - over_capacity: seatsTaken > effective capacity (account for group_id)
+      - family_split: same family_id seated at multiple tables (without group)
+      - near_family_not_at_same_table: family's near_family_id has a guest seated elsewhere
+      - one_way_preference: guest A lists guest B in seatingPreferences but B doesn't reciprocate
+    """
+    where_g = "WHERE g.table_id IS NOT NULL"
+    params: dict = {}
+    if ballroomId:
+        where_g += " AND g.ballroom_id=:b"; params["b"] = ballroomId
+    guests = (await db.execute(text(f"""
+        SELECT g.*, t.table_number, t.max_capacity, t.group_id AS t_group_id
+        FROM guests g JOIN tables t ON t.id=g.table_id
+        {where_g}
+    """), params)).mappings().all()
+
+    tables_q = "SELECT * FROM tables"
+    if ballroomId: tables_q += " WHERE ballroom_id=:b"
+    tables = (await db.execute(text(tables_q), params)).mappings().all()
+
+    by_tid = {t["id"]: dict(t) for t in tables}
+    seated_per_t: dict = {}
+    by_family: dict = {}
+    name_index: dict = {}
+    for g in guests:
+        seated_per_t.setdefault(g["table_id"], 0)
+        seated_per_t[g["table_id"]] += int(g["party_size"] or 0)
+        if g["family_id"]:
+            by_family.setdefault(g["family_id"], []).append(dict(g))
+        name_index[g["full_name"].lower()] = dict(g)
+    # group capacity
+    group_cap: dict = {}
+    for t in tables:
+        if t["group_id"]:
+            group_cap[t["group_id"]] = group_cap.get(t["group_id"], 0) + int(t["max_capacity"] or 0)
+
+    conflicts: List[dict] = []
+    # over capacity
+    for tid, seated in seated_per_t.items():
+        t = by_tid.get(tid)
+        if not t: continue
+        eff = group_cap.get(t["group_id"]) if t["group_id"] else int(t["max_capacity"] or 0)
+        if seated > eff:
+            conflicts.append({
+                "type": "over_capacity", "tableId": tid,
+                "tableNumber": t["table_number"], "seated": seated, "capacity": eff,
+                "message": f"Table {t['table_number']} has {seated} guests but seats {eff}",
+            })
+    # family split (members at different tables AND tables don't share a group_id)
+    for fid, members in by_family.items():
+        tids = {m["table_id"] for m in members}
+        if len(tids) > 1:
+            # check if all those tables share the same group_id
+            gids = {by_tid[tid]["group_id"] for tid in tids if tid in by_tid}
+            if not (len(gids) == 1 and None not in gids):
+                conflicts.append({
+                    "type": "family_split", "familyId": fid,
+                    "tableIds": list(tids),
+                    "memberCount": sum(int(m["party_size"] or 0) for m in members),
+                    "message": f"Family {fid} is split across {len(tids)} tables",
+                })
+    # near_family adjacency missing
+    for g in guests:
+        nf = g["near_family_id"]
+        if not nf: continue
+        peers = by_family.get(nf, [])
+        if not peers: continue
+        my_tid = g["table_id"]
+        if not any(p["table_id"] == my_tid or
+                   (by_tid.get(p["table_id"], {}).get("group_id") and
+                    by_tid.get(p["table_id"], {}).get("group_id") == by_tid.get(my_tid, {}).get("group_id"))
+                   for p in peers):
+            conflicts.append({
+                "type": "near_family_not_at_same_table",
+                "guestId": g["id"], "familyId": g["family_id"], "wantedFamilyId": nf,
+                "tableId": my_tid, "tableNumber": g["table_number"],
+                "message": f"{g['full_name']} wanted to sit near family {nf}",
+            })
+    # one-way preferences
+    for g in guests:
+        for pref in (g["seating_preferences"] or []):
+            target = name_index.get((pref or "").strip().lower())
+            if not target: continue
+            theirs = [p.strip().lower() for p in (target["seating_preferences"] or [])]
+            if g["full_name"].lower() not in theirs:
+                conflicts.append({
+                    "type": "one_way_preference",
+                    "guestId": g["id"], "guestName": g["full_name"],
+                    "targetGuestId": target["id"], "targetGuestName": target["full_name"],
+                    "tableId": g["table_id"], "tableNumber": g["table_number"],
+                    "message": f"{g['full_name']} requested {target['full_name']} but not vice versa",
+                })
+
+    # group by table
+    by_table_id: dict = {}
+    for c in conflicts:
+        tid = c.get("tableId") or (c.get("tableIds")[0] if c.get("tableIds") else None)
+        if tid:
+            by_table_id.setdefault(tid, []).append(c)
+    return {"conflicts": conflicts, "byTableId": by_table_id, "count": len(conflicts)}
+
+
+# ---------- ANALYTICS ----------
+@api.get("/analytics/summary")
+async def analytics_summary(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    stats = (await db.execute(text("""
+        SELECT
+          COUNT(*) AS submissions,
+          COALESCE(SUM(party_size),0) AS people,
+          COALESCE(SUM(CASE WHEN status='fully_assigned' THEN party_size ELSE 0 END),0) AS seated_people,
+          COUNT(*) FILTER (WHERE status='fully_assigned') AS seated,
+          COUNT(*) FILTER (WHERE status='partially_assigned') AS partial,
+          COUNT(*) FILTER (WHERE status='unassigned') AS unassigned,
+          COALESCE(SUM(high_chair_count),0) AS high_chairs
+        FROM guests
+    """))).mappings().first()
+    t_stats = (await db.execute(text("""
+        SELECT COUNT(*) AS table_count, COALESCE(SUM(max_capacity),0) AS total_cap
+        FROM tables
+    """))).mappings().first()
+    seated_capacity = (await db.execute(text("""
+        SELECT COALESCE(SUM(g.party_size),0) FROM guests g
+        WHERE g.table_id IS NOT NULL
+    """))).scalar() or 0
+    total_cap = int(t_stats["total_cap"] or 0)
+    utilization = round(100 * seated_capacity / total_cap, 1) if total_cap > 0 else 0.0
+    conflicts = await list_conflicts(None, user, db)
+    return {
+        "totalSubmissions": int(stats["submissions"] or 0),
+        "totalPeople": int(stats["people"] or 0),
+        "seatedSubmissions": int(stats["seated"] or 0),
+        "seatedPeople": int(stats["seated_people"] or 0),
+        "unassignedSubmissions": int(stats["unassigned"] or 0),
+        "partialSubmissions": int(stats["partial"] or 0),
+        "tableCount": int(t_stats["table_count"] or 0),
+        "totalCapacity": total_cap,
+        "tableUtilizationPct": utilization,
+        "highChairsRequested": int(stats["high_chairs"] or 0),
+        "activeConflicts": conflicts["count"],
+    }
 
 
 # ---------- DEV / SKIP-LOGIN ----------

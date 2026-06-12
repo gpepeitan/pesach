@@ -20,7 +20,8 @@ import {
   Image as ImageIcon, Trash2, ZoomIn, ZoomOut, Maximize2, Square, Circle,
   RectangleHorizontal, Mic, Music, Wine, Pizza, ChefHat, BoxSelect, DoorOpen,
   DoorClosed, Loader2, MoveLeft, Magnet, Eye, EyeOff, Ruler, Bath, Building2,
-  ArrowLeftRight, Settings2, ChevronRight, ChevronLeft,
+  ArrowLeftRight, Settings2, ChevronRight, ChevronLeft, Minus, Type,
+  AlertTriangle, Users, Undo2, Redo2, Printer, X as XIcon,
 } from "lucide-react";
 
 // Bundler-friendly PDF.js worker — served from CDN at the version we depend on.
@@ -61,6 +62,8 @@ const PALETTE = [
     { type: "entrance",     label: "Entrance",     icon: DoorOpen,  widthIn: 48, lengthIn: 18 },
     { type: "exit",         label: "Exit",         icon: DoorClosed,widthIn: 48, lengthIn: 18 },
     { type: "blocker",      label: "Space Blocker",icon: Square,    widthIn: 60, lengthIn: 60 },
+    { type: "line",         label: "Divider Line", icon: Minus,     widthIn: 120, lengthIn: 6, isLine: true },
+    { type: "text",         label: "Text Label",   icon: Type,      widthIn: 96,  lengthIn: 24, isText: true },
   ]},
 ];
 
@@ -82,6 +85,8 @@ const OBJ_STYLE = {
   door:            { fill: "transparent",            stroke: "#0f172a", dashed: false, label: "" },
   sign:            { fill: "#fde68a", stroke: "#92400e", dashed: false, label: "SIGN" },
   marker:          { fill: "#fed7aa", stroke: "#9a3412", dashed: false, label: "MARKER" },
+  line:            { fill: "transparent",            stroke: "#0f172a", dashed: false, label: "" },
+  text:            { fill: "rgba(254, 240, 138, 0.45)", stroke: "#a16207", dashed: true,  label: "" },
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -184,6 +189,10 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
 
   // UI state
   const [selection, setSelection] = useState(null); // {kind, id} | {kind:'room'}
+  const [selectionSet, setSelectionSet] = useState([]); // [{kind, id}, ...] for multi-select
+  const [conflicts, setConflicts] = useState({});       // { [tableId]: [conflict, ...] }
+  const [historyStack, setHistoryStack] = useState({ undoAvailable: 0, redoAvailable: 0 });
+  const [showGuestPanel, setShowGuestPanel] = useState(false);
   const [showPalette, setShowPalette] = useState(true);
   const [showPanel, setShowPanel] = useState(true);
   const [savingFp, setSavingFp] = useState(false);
@@ -266,6 +275,22 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   const onObjectPointerDown = (e, kind, item) => {
     if (!isAdmin) return;
     e.stopPropagation();
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd+Click → toggle in multi-select set
+      setSelectionSet((prev) => {
+        const exists = prev.some(s => s.kind === kind && s.id === item.id);
+        if (exists) return prev.filter(s => !(s.kind === kind && s.id === item.id));
+        // include the previously-primary selection so multi-select feels natural
+        const merged = [...prev];
+        if (selection && !prev.some(s => s.kind === selection.kind && s.id === selection.id))
+          merged.push({ kind: selection.kind, id: selection.id });
+        merged.push({ kind, id: item.id });
+        return merged;
+      });
+      setSelection({ kind, id: item.id });
+      return;
+    }
+    setSelectionSet([]);
     setSelection({ kind, id: item.id });
     const { x, y } = screenToCanvas(e.clientX, e.clientY);
     const ix = item.canvasX ?? item.x ?? 0;
@@ -282,6 +307,72 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     window.addEventListener("keyup", up);
     return () => { window.removeEventListener("keydown", dn); window.removeEventListener("keyup", up); };
   }, []);
+
+  // Refresh history availability + conflicts whenever tables/objects change.
+  const refreshHistory = useCallback(async () => {
+    try { const r = await apiClient.get("/history/stack"); setHistoryStack(r.data); }
+    catch (e) { /* ignore */ }
+  }, []);
+  const refreshConflicts = useCallback(async () => {
+    if (!ballroom?.id) return;
+    try {
+      const r = await apiClient.get(`/seating/conflicts?ballroomId=${ballroom.id}`);
+      setConflicts(r.data.byTableId || {});
+    } catch (e) { /* ignore */ }
+  }, [ballroom?.id]);
+  useEffect(() => { refreshHistory(); refreshConflicts(); }, [tables, objects, refreshHistory, refreshConflicts]);
+
+  const undo = useCallback(async () => {
+    try { await apiClient.post("/history/undo"); await load(); }
+    catch (e) { /* swallow */ }
+  }, [load]);
+  const redo = useCallback(async () => {
+    try { await apiClient.post("/history/redo"); await load(); }
+    catch (e) { /* swallow */ }
+  }, [load]);
+
+  const deleteSelection = useCallback(async () => {
+    if (!isAdmin) return;
+    // multi-select set takes precedence; otherwise the single primary
+    const targets = selectionSet.length > 0
+      ? selectionSet
+      : (selection && selection.kind !== "room" ? [selection] : []);
+    if (targets.length === 0) return;
+    const ok = window.confirm(`Delete ${targets.length} item(s)?`);
+    if (!ok) return;
+    for (const s of targets) {
+      try {
+        if (s.kind === "table") await apiClient.delete(`/tables/${s.id}`);
+        else if (s.kind === "object") await apiClient.delete(`/canvas-objects/${s.id}`);
+      } catch (err) {
+        const msg = err?.response?.data?.detail || "delete failed";
+        console.warn("Delete", s, msg);
+      }
+    }
+    setSelection(null); setSelectionSet([]);
+    await load();
+  }, [isAdmin, selection, selectionSet, load]);
+
+  // Global shortcuts: Delete/Backspace, Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z
+  useEffect(() => {
+    const onKey = (e) => {
+      if (isTypingTarget(e.target)) return;
+      const mod = e.ctrlKey || e.metaKey;
+      if ((e.key === "Delete" || e.key === "Backspace") && (selection || selectionSet.length)) {
+        e.preventDefault();
+        deleteSelection();
+      } else if (mod && (e.key === "z" || e.key === "Z") && !e.shiftKey) {
+        e.preventDefault(); undo();
+      } else if ((mod && (e.key === "y" || e.key === "Y")) ||
+                 (mod && e.shiftKey && (e.key === "z" || e.key === "Z"))) {
+        e.preventDefault(); redo();
+      } else if (e.key === "Escape") {
+        setSelection(null); setSelectionSet([]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selection, selectionSet, deleteSelection, undo, redo]);
 
   // Middle-button-down or space-bar-down → force pan (capture before objects).
   const onSvgPointerDownCapture = (e) => {
@@ -461,15 +552,23 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     };
   }, [drag, resize, rotate, panning, snapOn, gridPx, zoom, pxPerFt, canvasW, canvasH, tables, objects]);
 
-  // ─── Add from palette ────────────────────────────────────────────────────
-  const addFromPalette = async (item) => {
+  // ─── Add from palette (drop point in canvas coords if provided) ──────────
+  const addFromPalette = async (item, dropPoint = null) => {
     if (!isAdmin) return;
-    const r = svgRef.current.getBoundingClientRect();
-    const cx = -pan.x + r.width  / (2 * zoom);
-    const cy = -pan.y + r.height / (2 * zoom);
     const wPx = inToPx(item.widthIn,  pxPerFt);
     const hPx = inToPx(item.lengthIn, pxPerFt);
-    const center = { x: snapVal(cx - wPx / 2, gridPx, snapOn), y: snapVal(cy - hPx / 2, gridPx, snapOn) };
+    let topLeft;
+    if (dropPoint) {
+      topLeft = { x: snapVal(dropPoint.x - wPx / 2, gridPx, snapOn),
+                  y: snapVal(dropPoint.y - hPx / 2, gridPx, snapOn) };
+    } else {
+      const r = svgRef.current.getBoundingClientRect();
+      const cx = -pan.x + r.width  / (2 * zoom);
+      const cy = -pan.y + r.height / (2 * zoom);
+      topLeft = { x: snapVal(cx - wPx / 2, gridPx, snapOn),
+                  y: snapVal(cy - hPx / 2, gridPx, snapOn) };
+    }
+    const center = topLeft;
     if (item.isTable) {
       const next = Math.max(0, ...tables.map(t => t.tableNumber || 0)) + 1;
       try {
@@ -483,7 +582,6 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
         await load();
       } catch (e) { alert(e?.response?.data?.detail || "Failed to add table"); }
     } else if (item.isDoor) {
-      // Snap door to nearest wall on initial drop
       const obj = { x: center.x, y: center.y, width: wPx, height: hPx, rotation: 0, objectType: "door" };
       const snapped = snapDoorToWall(obj, canvasW, canvasH);
       try {
@@ -491,6 +589,15 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
           ballroomId: ballroom.id, objectType: "door", label: null,
           x: snapped.x, y: snapped.y, width: wPx, height: hPx, rotation: snapped.rotation,
           properties: { isDouble: !!item.isDouble, swingDirection: "right", hingeSide: "left", widthIn: item.widthIn },
+        });
+        await load();
+      } catch (e) { alert(e?.response?.data?.detail || "Failed"); }
+    } else if (item.isText) {
+      try {
+        await apiClient.post("/canvas-objects", {
+          ballroomId: ballroom.id, objectType: "text", label: "Label",
+          x: center.x, y: center.y, width: wPx, height: hPx, rotation: 0,
+          properties: { fontSize: 16, textContent: "Label" },
         });
         await load();
       } catch (e) { alert(e?.response?.data?.detail || "Failed"); }
@@ -511,6 +618,102 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     setSelection(null);
     await load();
   };
+
+  // Edit text-label object (double-click in canvas)
+  const editObjectText = async (o) => {
+    const cur = (o.properties && o.properties.textContent) || o.label || "";
+    const next = window.prompt("Edit text label:", cur);
+    if (next === null) return;
+    await apiClient.patch(`/canvas-objects/${o.id}`, {
+      label: next, properties: { textContent: next },
+    });
+    await load();
+  };
+
+  // Drop a family from the guest panel onto a table (whole family moves)
+  const onDropFamilyOnTable = async (tableId, guestId) => {
+    try {
+      await apiClient.post("/guests/family/move", { guestId, targetTableId: tableId });
+      await load();
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      alert(typeof d === "object" ? d.message : (d || "Failed to seat family"));
+    }
+  };
+
+  // ─── PDF export: clean floor plan + master seating list ──────────────────
+  const exportCanvasPdf = useCallback(async () => {
+    try {
+      const { default: jsPDF } = await import("jspdf");
+      const { toPng } = await import("html-to-image");
+      const svgEl = svgRef.current;
+      if (!svgEl) return;
+      // Render the SVG itself directly to a PNG via toPng on its host node.
+      const png = await toPng(svgEl, {
+        backgroundColor: "#ffffff",
+        cacheBust: true,
+        pixelRatio: 2,
+      });
+      const pdf = new jsPDF({ orientation: "landscape", unit: "pt", format: "letter" });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = png; });
+      const ratio = Math.min((pageW - 40) / img.width, (pageH - 60) / img.height);
+      const w = img.width * ratio;
+      const h = img.height * ratio;
+      pdf.setFontSize(14);
+      pdf.text(`${ballroom.name} — Floor Plan`, 20, 28);
+      pdf.addImage(png, "PNG", (pageW - w) / 2, 40, w, h);
+
+      // Page 2+: master seating list sorted by guest last name
+      const guestsR = await apiClient.get("/guests");
+      const guests = guestsR.data;
+      const tableById = new Map(tables.map((t) => [t.id, t]));
+      const rows = guests
+        .map((g) => ({
+          name: g.fullName, last: (g.fullName || "").split(" ").slice(-1)[0].toLowerCase(),
+          invoice: g.invoiceNumber, party: g.partySize,
+          hc: g.highChairCount,
+          tableNumber: g.tableId ? tableById.get(g.tableId)?.tableNumber : null,
+          family: g.familyId,
+        }))
+        .sort((a, b) => a.last.localeCompare(b.last));
+      pdf.addPage("letter", "portrait");
+      pdf.setFontSize(14); pdf.text(`${ballroom.name} — Master Seating List`, 40, 40);
+      pdf.setFontSize(10);
+      pdf.text("Table", 40, 70);
+      pdf.text("Family", 80, 70);
+      pdf.text("Invoice", 280, 70);
+      pdf.text("Party", 380, 70);
+      pdf.text("High Chairs", 420, 70);
+      pdf.line(40, 74, 560, 74);
+      let yPos = 90;
+      const colPage = pdf.internal.pageSize.getHeight() - 50;
+      for (const r of rows) {
+        if (yPos > colPage) {
+          pdf.addPage("letter", "portrait"); yPos = 60;
+        }
+        pdf.text(String(r.tableNumber ?? "—"), 40, yPos);
+        pdf.text((r.name || "").slice(0, 40), 80, yPos);
+        pdf.text(String(r.invoice || ""), 280, yPos);
+        pdf.text(String(r.party || 0), 380, yPos);
+        pdf.text(String(r.hc || 0), 420, yPos);
+        yPos += 14;
+      }
+      pdf.save(`${ballroom.name.replace(/\s+/g, "_")}_seating_plan.pdf`);
+    } catch (e) {
+      console.error(e);
+      alert("PDF export failed: " + (e.message || "unknown error"));
+    }
+  }, [ballroom, tables]);
+
+  // Listen for the toolbar print button (fired via custom event so we can keep the button stateless)
+  useEffect(() => {
+    const handler = () => exportCanvasPdf();
+    window.addEventListener("canvas-print", handler);
+    return () => window.removeEventListener("canvas-print", handler);
+  }, [exportCanvasPdf]);
 
   // ─── Floor plan: upload (image or PDF) ───────────────────────────────────
   const uploadFloorPlan = async (file) => {
@@ -618,6 +821,28 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
             </>
           )}
           <div className="border-l border-stone-600 mx-1 h-6"></div>
+          <button onClick={undo} disabled={!historyStack.undoAvailable}
+            className="hover:bg-stone-700 p-1 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+            title={`Undo (Ctrl+Z) — ${historyStack.undoAvailable} available`}
+            data-testid="canvas-undo"><Undo2 className="h-4 w-4" /></button>
+          <button onClick={redo} disabled={!historyStack.redoAvailable}
+            className="hover:bg-stone-700 p-1 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+            title={`Redo (Ctrl+Y / Ctrl+Shift+Z) — ${historyStack.redoAvailable} available`}
+            data-testid="canvas-redo"><Redo2 className="h-4 w-4" /></button>
+          <button onClick={deleteSelection}
+            disabled={!selection && selectionSet.length === 0}
+            className="hover:bg-red-600 p-1 rounded disabled:opacity-30 disabled:cursor-not-allowed"
+            title="Delete selected (Del / Backspace)"
+            data-testid="canvas-delete"><Trash2 className="h-4 w-4" /></button>
+          <button onClick={() => setShowGuestPanel(s => !s)}
+            className={`p-1 rounded ${showGuestPanel ? "bg-amber-600 hover:bg-amber-500" : "hover:bg-stone-700"}`}
+            title="Toggle guest list panel"
+            data-testid="canvas-toggle-guests"><Users className="h-4 w-4" /></button>
+          <button onClick={() => window.dispatchEvent(new CustomEvent('canvas-print'))}
+            className="hover:bg-stone-700 p-1 rounded"
+            title="Export canvas to PDF"
+            data-testid="canvas-print"><Printer className="h-4 w-4" /></button>
+          <div className="border-l border-stone-600 mx-1 h-6"></div>
           <button onClick={() => setZoom(z => Math.max(0.3, z * 0.85))} data-testid="zoom-out" className="hover:bg-stone-700 p-1 rounded"><ZoomOut className="h-4 w-4" /></button>
           <span className="text-xs text-stone-300 w-12 text-center">{Math.round(zoom * 100)}%</span>
           <button onClick={() => setZoom(z => Math.min(3, z * 1.15))} data-testid="zoom-in" className="hover:bg-stone-700 p-1 rounded"><ZoomIn className="h-4 w-4" /></button>
@@ -646,9 +871,16 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
                     }
                     const Icon = p.icon;
                     return (
-                      <button key={p.paletteKey || `${p.type}-${idx}`} onClick={() => addFromPalette(p)} data-testid={`palette-${p.paletteKey || p.type}`}
-                        title={p.label}
-                        className="bg-white border border-stone-300 hover:border-stone-900 hover:bg-stone-50 rounded p-2 text-xs flex flex-col items-center gap-1 overflow-hidden">
+                      <button key={p.paletteKey || `${p.type}-${idx}`}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.effectAllowed = "copy";
+                          e.dataTransfer.setData("application/json", JSON.stringify(p));
+                        }}
+                        onClick={() => addFromPalette(p)}
+                        data-testid={`palette-${p.paletteKey || p.type}`}
+                        title={`${p.label} — drag onto canvas, or click to drop at center`}
+                        className="bg-white border border-stone-300 hover:border-stone-900 hover:bg-stone-50 rounded p-2 text-xs flex flex-col items-center gap-1 overflow-hidden cursor-grab active:cursor-grabbing">
                         <Icon className="h-4 w-4 text-stone-700 shrink-0" />
                         <span className="text-[10px] text-stone-700 leading-tight text-center truncate w-full">{p.label}</span>
                       </button>
@@ -657,7 +889,7 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
                 </div>
               </div>
             ))}
-            <p className="text-[10px] text-stone-500 mt-3 px-1">Tables come from your <b>Table Inventory</b> — no custom sizes. Click an item to drop it at the center of the view.</p>
+          <p className="text-[10px] text-stone-500 mt-3 px-1">Tables come from your <b>Table Inventory</b>. <b>Drag</b> any palette item onto the canvas to drop it where you release, or click to drop at center.</p>
           </div>
         )}
         {!showPalette && isAdmin && (
@@ -665,7 +897,27 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
         )}
 
         {/* ─── Canvas ──────────────────────────────────────────────────── */}
-        <div className="flex-1 bg-stone-700 relative overflow-hidden">
+        <div className="flex-1 bg-stone-700 relative overflow-hidden"
+             onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; }}
+             onDrop={(e) => {
+               e.preventDefault();
+               try {
+                 const raw = e.dataTransfer.getData("application/json");
+                 if (!raw) return;
+                 const item = JSON.parse(raw);
+                 if (item.__kind === "guestFamily") {
+                   // Find a table under the cursor by hit-testing the SVG elements
+                   const el = document.elementFromPoint(e.clientX, e.clientY);
+                   const node = el?.closest('[data-testid^="canvas-table-"]');
+                   if (!node) { alert("Drop the family on a table."); return; }
+                   const tid = Number(node.getAttribute("data-testid").replace("canvas-table-", ""));
+                   onDropFamilyOnTable(tid, item.guestId);
+                   return;
+                 }
+                 const { x, y } = screenToCanvas(e.clientX, e.clientY);
+                 addFromPalette(item, { x, y });
+               } catch (err) { console.error(err); }
+             }}>
           <svg ref={svgRef} className="w-full h-full"
                onPointerDownCapture={onSvgPointerDownCapture}
                onPointerDown={onSvgPointerDown}
@@ -704,23 +956,29 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
               {objects.filter(o => o.objectType.startsWith("room_")).map(o => (
                 <ObjectRenderer key={`o-${o.id}`} o={o} isAdmin={isAdmin}
                   isSelected={selection?.kind === "object" && selection.id === o.id}
+                  isMultiSelected={selectionSet.some(s => s.kind === "object" && s.id === o.id)}
                   onPointerDown={e => onObjectPointerDown(e, "object", o)}
                   onResizeStart={(e, h) => onResizePointerDown(e, "object", o, h)}
                   onRotateStart={e => onRotatePointerDown(e, "object", o)}
+                  onEditText={editObjectText}
                   onRemove={() => removeObject(o.id)} pxPerFt={pxPerFt} />
               ))}
               {objects.filter(o => !o.objectType.startsWith("room_") && o.objectType !== "door").map(o => (
                 <ObjectRenderer key={`o-${o.id}`} o={o} isAdmin={isAdmin}
                   isSelected={selection?.kind === "object" && selection.id === o.id}
+                  isMultiSelected={selectionSet.some(s => s.kind === "object" && s.id === o.id)}
                   onPointerDown={e => onObjectPointerDown(e, "object", o)}
                   onResizeStart={(e, h) => onResizePointerDown(e, "object", o, h)}
                   onRotateStart={e => onRotatePointerDown(e, "object", o)}
+                  onEditText={editObjectText}
                   onRemove={() => removeObject(o.id)} pxPerFt={pxPerFt} />
               ))}
               {/* Tables */}
               {tables.map(t => (
                 <TableRenderer key={`t-${t.id}`} t={t} isAdmin={isAdmin} pxPerFt={pxPerFt}
                   isSelected={selection?.kind === "table" && selection.id === t.id}
+                  isMultiSelected={selectionSet.some(s => s.kind === "table" && s.id === t.id)}
+                  conflictCount={(conflicts[t.id] || []).length}
                   groupCapacity={t.groupId ? groupCap[t.groupId] : null}
                   onPointerDown={e => onObjectPointerDown(e, "table", t)}
                   onDoubleClick={() => onOpenTable?.(t)}
@@ -731,6 +989,7 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
               {objects.filter(o => o.objectType === "door").map(o => (
                 <ObjectRenderer key={`o-${o.id}`} o={o} isAdmin={isAdmin}
                   isSelected={selection?.kind === "object" && selection.id === o.id}
+                  isMultiSelected={selectionSet.some(s => s.kind === "object" && s.id === o.id)}
                   onPointerDown={e => onObjectPointerDown(e, "object", o)}
                   onResizeStart={(e, h) => onResizePointerDown(e, "object", o, h)}
                   onRotateStart={e => onRotatePointerDown(e, "object", o)}
@@ -770,6 +1029,16 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
             )}
           </div>
           {savingFp && <div className="absolute top-3 right-3 bg-emerald-700 text-white text-sm px-3 py-1 rounded flex items-center gap-2"><Loader2 className="h-3 w-3 animate-spin" />Saving plan…</div>}
+
+          {/* Guest List floating panel on the canvas (toggle via toolbar) */}
+          {showGuestPanel && (
+            <CanvasGuestPanel
+              ballroomId={ballroom.id}
+              tables={tables}
+              conflicts={conflicts}
+              onClose={() => setShowGuestPanel(false)}
+            />
+          )}
         </div>
 
         {/* ─── Side Panel ──────────────────────────────────────────────── */}
@@ -830,7 +1099,7 @@ function DimensionLabels({ w, h, widthFt, heightFt }) {
   );
 }
 
-function TableRenderer({ t, pxPerFt, isAdmin, isSelected, onPointerDown, onDoubleClick, onResizeStart, onRotateStart, groupCapacity }) {
+function TableRenderer({ t, pxPerFt, isAdmin, isSelected, isMultiSelected, onPointerDown, onDoubleClick, onResizeStart, onRotateStart, groupCapacity, conflictCount }) {
   const dims = tablePxDims(t, pxPerFt);
   // Effective capacity = group sum when combined, else table's own.
   const effCap = groupCapacity || t.maxCapacity || 0;
@@ -848,7 +1117,11 @@ function TableRenderer({ t, pxPerFt, isAdmin, isSelected, onPointerDown, onDoubl
 
   return (
     <g transform={`translate(${x}, ${y}) rotate(${rot} ${dims.w / 2} ${dims.h / 2})`} data-testid={`canvas-table-${t.id}`} className="cursor-pointer">
-      {/* chairs (drawn first so the table sits on top) */}
+      {isMultiSelected && !isSelected && (
+        dims.isRound
+          ? <circle cx={dims.w / 2} cy={dims.h / 2} r={dims.radius + 6} fill="none" stroke="#0ea5e9" strokeWidth="2" strokeDasharray="4 3" />
+          : <rect x={-3} y={-3} width={dims.w + 6} height={dims.h + 6} fill="none" stroke="#0ea5e9" strokeWidth="2" strokeDasharray="4 3" rx={6} />
+      )}
       {chairs.map((c, i) => (
         <circle key={`ch-${i}`} cx={c.cx} cy={c.cy} r={c.r}
           fill={c.occupied ? CHAIR_OCCUPIED_FILL : CHAIR_EMPTY_FILL}
@@ -856,7 +1129,6 @@ function TableRenderer({ t, pxPerFt, isAdmin, isSelected, onPointerDown, onDoubl
           strokeWidth="1" pointerEvents="none"
           data-testid={`chair-${t.id}-${i}-${c.occupied ? "green" : "gray"}`} />
       ))}
-      {/* table body */}
       <g onPointerDown={onPointerDown} onDoubleClick={onDoubleClick}>
         {dims.isRound ? (
           <circle cx={dims.w / 2} cy={dims.h / 2} r={dims.radius} fill={fill} stroke={stroke}
@@ -871,10 +1143,17 @@ function TableRenderer({ t, pxPerFt, isAdmin, isSelected, onPointerDown, onDoubl
         <text x={dims.w / 2} y={dims.h / 2 + 10} fill={overflow ? "#b91c1c" : "#44403c"} fontSize="9" textAnchor="middle" dominantBaseline="middle" className="select-none pointer-events-none">
           {t.seatsTaken}/{effCap}{overflow ? " ⚠" : ""}
         </text>
-        <title>{t.label || `Table ${t.tableNumber}`} — {t.seatsTaken}/{effCap} · {dimsLabel}{groupLabel}{overflow ? " · OVER CAPACITY" : ""}</title>
+        <title>{t.label || `Table ${t.tableNumber}`} — {t.seatsTaken}/{effCap} · {dimsLabel}{groupLabel}{overflow ? " · OVER CAPACITY" : ""}{conflictCount ? ` · ${conflictCount} conflict(s)` : ""}</title>
       </g>
       {/* dimension label below table */}
       <text x={dims.w / 2} y={dims.h + 14} fill="#fde68a" fontSize="10" textAnchor="middle" className="select-none pointer-events-none font-mono">{dimsLabel}{groupLabel}</text>
+      {/* conflict badge */}
+      {conflictCount > 0 && (
+        <g data-testid={`conflict-badge-${t.id}`} pointerEvents="none">
+          <circle cx={dims.w - 4} cy={4} r={9} fill="#dc2626" stroke="#fff" strokeWidth="2" />
+          <text x={dims.w - 4} y={4} fontSize="11" fontWeight="700" fill="#fff" textAnchor="middle" dominantBaseline="central" className="select-none">{conflictCount}</text>
+        </g>
+      )}
       {/* selection + handles */}
       {isAdmin && isSelected && (
         <SelectionHandles w={dims.w} h={dims.h} onResizeStart={onResizeStart} onRotateStart={onRotateStart} />
@@ -883,20 +1162,41 @@ function TableRenderer({ t, pxPerFt, isAdmin, isSelected, onPointerDown, onDoubl
   );
 }
 
-function ObjectRenderer({ o, pxPerFt, isAdmin, isSelected, onPointerDown, onResizeStart, onRotateStart, onRemove }) {
+function ObjectRenderer({ o, pxPerFt, isAdmin, isSelected, isMultiSelected, onPointerDown, onResizeStart, onRotateStart, onRemove, onEditText }) {
   const style = OBJ_STYLE[o.objectType] || OBJ_STYLE.blocker;
   const rot = o.rotation || 0;
   const labelText = o.label || style.label || o.objectType.replace(/_/g, " ").toUpperCase();
   const isDoor = o.objectType === "door";
   const isRoom = o.objectType.startsWith("room_");
+  const isLine = o.objectType === "line";
+  const isText = o.objectType === "text";
 
   // Body
   let body = null;
   if (isDoor) {
     const props = o.properties || {};
     const isDouble = !!props.isDouble;
-    const swing = props.swingDirection === "left" ? "left" : "right"; // default right
+    const swing = props.swingDirection === "left" ? "left" : "right";
     body = <DoorBody w={o.width} h={o.height} isDouble={isDouble} swing={swing} />;
+  } else if (isLine) {
+    // Divider line: render as a thick horizontal rectangle (rotation handles orientation)
+    body = (
+      <rect width={o.width} height={Math.max(2, Math.min(o.height, 8))}
+            y={(o.height - Math.max(2, Math.min(o.height, 8))) / 2}
+            fill="#1c1917" stroke="#000" strokeWidth="0" />
+    );
+  } else if (isText) {
+    const fs = (o.properties && o.properties.fontSize) || 16;
+    const txt = (o.properties && o.properties.textContent) || o.label || "Label";
+    body = (
+      <>
+        <rect width={o.width} height={o.height} fill={style.fill} stroke={style.stroke} strokeWidth={1.5}
+              strokeDasharray={isSelected ? "0" : "4 3"} rx={3} />
+        <text x={o.width / 2} y={o.height / 2} fill="#1c1917" fontSize={fs}
+              textAnchor="middle" dominantBaseline="middle"
+              className="select-none pointer-events-none font-medium">{txt}</text>
+      </>
+    );
   } else {
     body = (
       <rect width={o.width} height={o.height}
@@ -905,24 +1205,28 @@ function ObjectRenderer({ o, pxPerFt, isAdmin, isSelected, onPointerDown, onResi
     );
   }
 
-  // Dimensions label
   const dimsLabel = `${formatLen(pxToIn(o.width, pxPerFt))} × ${formatLen(pxToIn(o.height, pxPerFt))}`;
+  const multiHalo = isMultiSelected && !isSelected;
 
   return (
     <g transform={`translate(${o.x}, ${o.y}) rotate(${rot} ${o.width / 2} ${o.height / 2})`}
        data-testid={`canvas-obj-${o.id}`} className={isAdmin ? "cursor-move" : ""}>
-      <g onPointerDown={onPointerDown}>
+      {multiHalo && (
+        <rect x={-3} y={-3} width={o.width + 6} height={o.height + 6}
+              fill="none" stroke="#0ea5e9" strokeWidth="2" strokeDasharray="4 3" rx={6} />
+      )}
+      <g onPointerDown={onPointerDown}
+         onDoubleClick={(e) => { if (isText && isAdmin) { e.stopPropagation(); onEditText?.(o); } }}>
         {body}
-        {labelText && !isDoor && (
+        {labelText && !isDoor && !isLine && !isText && (
           <text x={o.width / 2} y={o.height / 2} fill={style.stroke} fontSize={isRoom ? 14 : 11} textAnchor="middle" dominantBaseline="middle"
                 className="select-none pointer-events-none uppercase tracking-wider font-medium">
             {labelText}
           </text>
         )}
-        <title>{labelText} — {dimsLabel}</title>
+        <title>{labelText} — {dimsLabel}{isText ? " (double-click to edit text)" : ""}</title>
       </g>
-      {/* dimension label under the object */}
-      {!isDoor && (
+      {!isDoor && !isLine && !isText && (
         <text x={o.width / 2} y={o.height + 12} fill="#fde68a" fontSize="9" textAnchor="middle" className="select-none pointer-events-none font-mono">{dimsLabel}</text>
       )}
       {isAdmin && isSelected && (
@@ -1260,4 +1564,126 @@ async function pdfFirstPageToDataUrl(file) {
   const ctx = canvas.getContext("2d");
   await page.render({ canvasContext: ctx, viewport }).promise;
   return canvas.toDataURL("image/png");
+}
+
+
+// ─── Canvas Guest Panel (floating, draggable families onto tables) ────────────
+function CanvasGuestPanel({ ballroomId, tables, conflicts, onClose }) {
+  const [guests, setGuests] = useState([]);
+  const [q, setQ] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const r = await apiClient.get("/guests");
+      setGuests(r.data);
+    } catch (e) { /* ignore */ }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const tableNumFor = (g) => {
+    if (!g.tableId) return null;
+    const t = tables.find((x) => x.id === g.tableId);
+    return t ? t.tableNumber : null;
+  };
+
+  // group guests by family_id for easy drag-the-whole-family UX
+  const families = useMemo(() => {
+    const map = new Map();
+    for (const g of guests) {
+      const key = g.familyId || `__solo_${g.id}`;
+      if (!map.has(key)) {
+        map.set(key, { familyId: g.familyId, members: [], total: 0, anchor: g });
+      }
+      const row = map.get(key);
+      row.members.push(g);
+      row.total += g.partySize || 0;
+    }
+    return Array.from(map.values());
+  }, [guests]);
+
+  const matches = (fam) => {
+    if (!q.trim()) return true;
+    const needle = q.toLowerCase();
+    return fam.members.some((m) =>
+      (m.fullName || "").toLowerCase().includes(needle) ||
+      (m.invoiceNumber || "").toLowerCase().includes(needle) ||
+      (m.familyId || "").toLowerCase().includes(needle)
+    );
+  };
+
+  const statusColor = (g) => {
+    if (!g.tableId) return "bg-stone-300 text-stone-700";
+    return "bg-emerald-200 text-emerald-900";
+  };
+
+  return (
+    <div className="absolute top-3 right-3 w-80 max-h-[80vh] bg-white rounded-xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col z-30"
+         data-testid="canvas-guest-panel">
+      <div className="px-3 py-2 bg-stone-900 text-white flex items-center justify-between">
+        <div className="font-medium flex items-center gap-2">
+          <Users className="h-4 w-4" /> Guest List
+          <span className="text-xs text-stone-400">({guests.length})</span>
+        </div>
+        <button onClick={onClose} className="hover:bg-stone-700 p-1 rounded" data-testid="close-guest-panel">
+          <XIcon className="h-4 w-4" />
+        </button>
+      </div>
+      <div className="p-2 border-b border-stone-200">
+        <input value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder="Search name, family, invoice…"
+          data-testid="canvas-guest-search"
+          className="w-full px-2 py-1 text-sm border border-stone-300 rounded" />
+        <div className="text-[10px] text-stone-500 mt-1">Drag a family card onto a table on the canvas.</div>
+      </div>
+      <div className="overflow-y-auto flex-1 divide-y divide-stone-100">
+        {families.filter(matches).map((fam) => {
+          const num = tableNumFor(fam.anchor);
+          const seated = !!fam.anchor.tableId;
+          const fid = fam.familyId || fam.anchor.id;
+          return (
+            <div key={fid}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.effectAllowed = "move";
+                e.dataTransfer.setData("application/json", JSON.stringify({
+                  __kind: "guestFamily", guestId: fam.anchor.id,
+                  familyId: fam.familyId, total: fam.total,
+                }));
+              }}
+              className="px-3 py-2 cursor-grab active:cursor-grabbing hover:bg-stone-50"
+              data-testid={`guest-card-${fam.anchor.id}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-medium text-sm truncate">{fam.anchor.fullName}</div>
+                  <div className="text-[11px] text-stone-500 truncate">
+                    {fam.familyId ? `Fam ${fam.familyId}` : "(solo)"} · {fam.total} ppl
+                    {fam.anchor.nearFamilyId ? ` · near ${fam.anchor.nearFamilyId}` : ""}
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-1">
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded ${statusColor(fam.anchor)}`}>
+                    {seated ? `T#${num}` : "unassigned"}
+                  </span>
+                  {fam.anchor.tableId && (conflicts[fam.anchor.tableId]?.length || 0) > 0 && (
+                    <span className="text-[10px] text-red-700 flex items-center gap-0.5">
+                      <AlertTriangle className="h-3 w-3" /> conflict
+                    </span>
+                  )}
+                </div>
+              </div>
+              {fam.anchor.seatingPreferences?.length > 0 && (
+                <div className="text-[10px] text-stone-500 mt-1">
+                  wants: {fam.anchor.seatingPreferences.join(", ")}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {families.filter(matches).length === 0 && (
+          <div className="p-6 text-center text-stone-400 text-sm">No matches</div>
+        )}
+      </div>
+    </div>
+  );
 }

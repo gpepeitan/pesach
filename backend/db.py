@@ -201,6 +201,21 @@ ALTER TABLE tables ADD COLUMN IF NOT EXISTS type_id INTEGER REFERENCES table_typ
 -- Phase 4.7 (combined tables): when a family > capacity, multiple tables linked as one logical group
 ALTER TABLE tables ADD COLUMN IF NOT EXISTS group_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_tables_group_id ON tables(group_id);
+
+-- Phase 5 (undo/redo): persisted action history per staff
+CREATE TABLE IF NOT EXISTS action_history (
+  id SERIAL PRIMARY KEY,
+  staff_id INTEGER REFERENCES staff_users(id) ON DELETE SET NULL,
+  scope TEXT NOT NULL DEFAULT 'global',  -- 'canvas' | 'guests' | 'unassigned' | 'global'
+  action_type TEXT NOT NULL,             -- e.g. 'table_update', 'guest_update'
+  target_type TEXT NOT NULL,             -- e.g. 'table', 'guest', 'canvas_object'
+  target_id TEXT,                        -- string so we can store group ids / composite keys
+  before_state JSONB,                    -- snapshot before the change (for undo)
+  after_state JSONB,                     -- snapshot after the change (for redo)
+  is_undone BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_action_history_staff ON action_history(staff_id, created_at DESC);
 """
 
 
