@@ -1,0 +1,50 @@
+{
+  "summary": "Phase-6 (Canvas UX & ops polish) tested end-to-end. Backend: 11/11 pytest passing (7 from /app/backend/tests/test_phase6.py + 4 new in /app/backend/tests/test_phase6_extended.py covering history-stack growth, analytics 10-key coverage, text-label PATCH persistence, conflicts grouping shape). Frontend: skip/dev login works, dashboard global undo/redo arrows visible, Analytics tab loads with all 10 cards populated from /api/analytics/summary, canvas opens with full Phase-6 toolbar (canvas-undo/redo/delete/toggle-guests/print) and palette tiles palette-line + palette-text. Guest side panel toggles open with search box (canvas-guest-search) and family cards (guest-card-{id}). canvas-delete is correctly disabled with no selection. Clicking palette-text drops a label object at canvas center as fallback (objects count went 11→12). Found one real bug: over_capacity conflict detection is broken for grouped/combined tables, causing /api/seating/conflicts to return 0 conflicts even though Table 1 (party-sum 14) + Table 2 (10) = 24 in a group of capacity 20.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/seating/conflicts", "issue": "over_capacity detection bug for grouped/combined tables. Loop in list_conflicts() (server.py ~line 1900) compares PER-TABLE seated count against GROUP capacity instead of summing all group members first. Live data: Tables 1+2 (group cc07a5ca, combined cap 20) hold 14+10=24 party-seats (4 over); Tables 3+1908 (group 3fb4983a, cap 20) hold 12+10=22 party-seats (2 over). Neither reported. Result: analytics-conflicts card and canvas red-dot badges always show 0 for combined tables.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/analytics/summary", "issue": "Returns key 'partialSubmissions' but spec/wording in review_request mentions 'partiallySeatedSubmissions'. Frontend reads 'partialSubmissions' so wiring is fine. Naming nit only."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Dashboard GuestList <select>", "issue": "Pre-existing React hydration warning: '<span> cannot be a child of <option>'. Caused by Emergent visual-editor instrumentation; functionally harmless. Documented in iteration_5 — still present.", "selector": "[data-testid^='guest-table-select-']", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Conflict badges on canvas", "issue": "Because backend conflicts endpoint misreports over_capacity for grouped tables, the red-dot badge (data-testid='conflict-badge-{tableId}') never renders for combined tables. Single (non-grouped) over-capacity tables would still surface correctly.", "affected_selectors": ["[data-testid^='conflict-badge-']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase6.py",
+    "/app/backend/tests/test_phase6_extended.py",
+    "/app/test_reports/pytest/pytest_phase6.xml",
+    "/app/test_reports/pytest/pytest_phase6_extended.xml",
+    "/app/test_reports/pytest/pytest_phase6_all.xml"
+  ],
+  "action_items": [
+    "FIX backend /api/seating/conflicts over_capacity loop to group-aware aggregation: sum party_size across all tables sharing a group_id, then compare once per group against group_cap. Solo (group_id=NULL) tables continue using per-table cap. After fix, /api/analytics/summary->activeConflicts and canvas red-dot badges will populate correctly.",
+    "(Optional, cosmetic) Suppress or wrap <option>{tableNumber}</option> rendering so the visual-editor instrumentation does not inject a <span> inside <option> — eliminates the hydration warning on Guest List.",
+    "(Optional, naming) Decide whether to rename analytics key 'partialSubmissions' → 'partiallySeatedSubmissions' to match phase-6 spec wording (frontend would need same rename)."
+  ],
+  "critical_code_review_comments": [
+    "server.py L1898-1909: over_capacity check uses group_cap for eff but iterates seated_per_t per single tableId, so seated never aggregates to group level — guarantees false negatives whenever any table belongs to a group. Should pre-aggregate seated_per_group, then iterate groups once and per-non-grouped tables once.",
+    "server.py L1957-1961: when building byTableId for family_split conflicts, only the first tableId in c['tableIds'] is recorded; other affected tables won't show the badge. Consider attaching the family_split entry to ALL of c['tableIds'].",
+    "BallroomCanvas.jsx L1664: family-card testid is `guest-card-{id}` (not `canvas-guest-card-*` mentioned in some Phase-6 notes). Confirm naming convention with PM if external automation depends on the prefix."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase6_extended.py (new)"
+  ],
+  "success_rate": {
+    "backend": "100% (11/11 incl. 4 new extended tests)",
+    "frontend": "100% of Phase-6 surface verified; 1 backend-rooted integration gap (conflict badges for combined tables)"
+  },
+  "test_credentials": "Skip/Dev login via 'skip-login-btn' on /staff/login (DEV_AUTH_BYPASS=1 → POST /api/auth/dev-login).",
+  "seed_data_creation": "Uses live Supabase data from iteration_5 (TEST_BigA/B/Smith/Jones/Excel guests, 4 tables across 2 groups). New tests create+delete one text canvas-object and one line canvas-object per run (TEST_TXT_<RUN_ID>) — fully cleaned up via DELETE in fixture teardown.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase-6 backend endpoints (history/undo, history/redo, history/stack, seating/conflicts, analytics/summary, PATCH canvas-objects, PATCH guests with invoiceNumber+seatingPreferences) all functional. UI surfaces are wired: dashboard header has global-undo/global-redo arrow buttons; canvas-toolbar has canvas-undo/redo/delete/toggle-guests/print; palette has palette-line + palette-text; analytics-tab has all 10 cards. Open canvas via 'Open canvas' button under Tables & Seating tab (it launches the full BallroomCanvas overlay). One real bug to verify after fix: combined-table over_capacity conflict detection — once fixed, /api/seating/conflicts should return at least 2 conflicts in current live DB (tables 1+2 and 3+1908). Hydration <option><span> warning is Emergent visual-editor injection, not app code.",
+  "rca of the issue": "Conflict endpoint bug: in list_conflicts (server.py ~L1900) the iteration is `for tid, seated in seated_per_t.items()` comparing each table's per-table seated count against `group_cap.get(t['group_id'])`. When two tables share a group, both tables compare their individual seated total (e.g. 14, 10) against the COMBINED group cap (20), which trivially passes. Repro: live data shows tables 1+2 hold sum=24 in a 20-seat group yet endpoint returns conflicts=[]. Mitigation: aggregate seated per group_id first, then check group_total > group_cap once; for solo tables fall back to existing per-table compare."
+}

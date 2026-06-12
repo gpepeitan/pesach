@@ -545,10 +545,20 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
+    // Bulletproof: any blur / tab switch / Escape also clears stuck drag state.
+    const onBlur = () => { setDrag(null); setResize(null); setRotate(null); setPanning(null); };
+    const onVis = () => { if (document.hidden) onBlur(); };
+    const onEsc = (e) => { if (e.key === "Escape") onBlur(); };
+    window.addEventListener("blur", onBlur);
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("keydown", onEsc);
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("blur", onBlur);
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("keydown", onEsc);
     };
   }, [drag, resize, rotate, panning, snapOn, gridPx, zoom, pxPerFt, canvasW, canvasH, tables, objects]);
 
