@@ -175,6 +175,12 @@ ALTER TABLE tables ADD COLUMN IF NOT EXISTS width_in NUMERIC(8,2) NOT NULL DEFAU
 ALTER TABLE tables ADD COLUMN IF NOT EXISTS length_in NUMERIC(8,2) NOT NULL DEFAULT 60;
 
 ALTER TABLE canvas_objects ADD COLUMN IF NOT EXISTS properties JSONB NOT NULL DEFAULT '{}'::jsonb;
+
+-- Phase 4.5 (automated seating engine): family grouping + adjacency
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS family_id TEXT;
+ALTER TABLE guests ADD COLUMN IF NOT EXISTS near_family_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_guests_family_id ON guests(family_id);
+CREATE INDEX IF NOT EXISTS idx_guests_near_family_id ON guests(near_family_id);
 """
 
 
