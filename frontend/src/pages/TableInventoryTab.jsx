@@ -69,7 +69,7 @@ export default function TableInventoryTab({ isAdmin }) {
   };
 
   return (
-    <div className="p-6 space-y-6" data-testid="inventory-tab">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6" data-testid="inventory-tab">
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold text-stone-900 flex items-center gap-2">
@@ -140,8 +140,8 @@ export default function TableInventoryTab({ isAdmin }) {
         </form>
       )}
 
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
-        <table className="w-full text-sm" data-testid="inventory-table">
+      <div className="bg-white border border-stone-200 rounded-lg overflow-x-auto">
+        <table className="w-full text-sm min-w-[560px]" data-testid="inventory-table">
           <thead className="bg-stone-50 border-b border-stone-200">
             <tr>
               <th className="text-left p-3">Name</th>

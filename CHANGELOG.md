@@ -47,6 +47,16 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - **family_split conflict** tagging now attaches the entry to every member table,
   not just the first.
 
+### Mobile-friendly responsive pass (2026-02-12, same release)
+- Dashboard header collapses (logo shortened, user name hidden, Logout text hidden) on `<sm`.
+- Stats bar becomes a horizontally-scrolling strip on `<sm` with smaller type.
+- Tab bar scrolls horizontally on `<sm` with `no-scrollbar` utility.
+- All data tables (Guest List, Inventory, Roster, Staff, Activity Log, Auto-Assign plan, Bulk Import) wrap in `overflow-x-auto` with `min-w` so columns don't collapse.
+- GuestList hides low-priority columns at `<sm` (invoice, family, flags, submitted) and at `<md` (status).
+- GuestDrawer is full-width on `<sm` (drops `max-w-lg`).
+- BallroomCanvas: palette is hidden by default on `<sm`, opens as a sliding tray; properties side panel becomes a bottom sheet (max-h 55vh, sticky bottom) on `<sm`; canvas guest panel fills the screen on `<sm`; toolbar wraps + scrolls.
+- iOS niceties in `index.css`: `touch-action: none` on the SVG canvas so pointer drags work without page zoom; `-webkit-tap-highlight-color: transparent`.
+
 ### Tests
 - `backend/tests/test_phase6.py` (7) + `backend/tests/test_phase6_extended.py` (4) — **11/11 passing**.
 

@@ -17,6 +17,15 @@ code {
         source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
 }
 
+/* Mobile-friendly utilities */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Disable iOS tap highlight + native double-tap zoom on canvas drag surfaces */
+html, body { -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%; }
+[data-testid="canvas-svg"] { touch-action: none; }
+
+
 @layer base {
     :root {
         --background: 0 0% 100%;

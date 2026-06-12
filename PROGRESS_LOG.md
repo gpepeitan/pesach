@@ -121,3 +121,16 @@
 - Printable centerpiece cards (per-table guest sheets)
 - Year-to-year archive + reset tool
 - WebSocket live collaborative editing with soft locks
+
+## 2026-02-12 — Mobile-friendly responsive pass
+
+Applied responsive Tailwind classes across the app so it's usable on phones (tested at 390×844 / iPhone 14):
+- Dashboard header / stats bar / tab bar collapse + scroll on `<sm`.
+- Every data table now lives in `overflow-x-auto` with `min-w`; low-priority columns hide at `<sm` / `<md`.
+- GuestDrawer takes full screen on phone.
+- BallroomCanvas: palette hidden by default on phone (toggle button), properties panel becomes a bottom sheet, guest panel fills the screen.
+- `index.css` adds `.no-scrollbar`, `touch-action:none` for the canvas SVG, removes iOS tap highlight.
+
+Modals (Bulk Import, Auto-Assign) now use full viewport on phone with internal scroll.
+
+Files touched: Dashboard.jsx, BallroomCanvas.jsx, TableInventoryTab.jsx, TablesTab.jsx, RosterTab.jsx, components/GuestBulkActions.jsx, index.css.

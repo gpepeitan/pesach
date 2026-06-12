@@ -315,16 +315,16 @@ export default function TablesTab({ isAdmin }) {
   };
 
   return (
-    <div className="p-6" data-testid="tables-tab">
-      <div className="flex justify-between items-start mb-6 gap-4 flex-wrap">
-        <div>
-          <h2 className="text-xl font-semibold text-stone-900">Tables & Seating</h2>
-          <p className="text-sm text-stone-600">Color: gray=empty, blue=partial, yellow=1–2 left, green=full</p>
+    <div className="p-3 sm:p-6" data-testid="tables-tab">
+      <div className="flex justify-between items-start mb-6 gap-2 flex-wrap">
+        <div className="min-w-0">
+          <h2 className="text-lg sm:text-xl font-semibold text-stone-900">Tables & Seating</h2>
+          <p className="text-xs sm:text-sm text-stone-600">Color: gray=empty, blue=partial, yellow=1–2 left, green=full</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <BallroomForm onCreated={load} isAdmin={isAdmin} />
           <button data-testid="auto-suggest-btn" onClick={() => setShowAuto(true)}
-            className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-4 py-2 rounded flex items-center gap-1">
+            className="bg-amber-500 hover:bg-amber-600 text-white text-sm px-3 sm:px-4 py-2 rounded flex items-center gap-1">
             <Sparkles className="h-4 w-4" /> Auto-Suggest
           </button>
         </div>

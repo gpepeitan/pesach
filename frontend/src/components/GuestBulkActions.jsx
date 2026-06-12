@@ -31,13 +31,13 @@ export function BulkImportButton({ onDone }) {
         <Upload className="h-4 w-4" /> Bulk Import
       </button>
       {open && (
-        <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4" onClick={() => setOpen(false)}>
-          <div className="bg-white rounded-xl max-w-xl w-full shadow-2xl" onClick={(e) => e.stopPropagation()} data-testid="bulk-import-modal">
+        <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-2 sm:p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-xl w-full max-w-xl shadow-2xl max-h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()} data-testid="bulk-import-modal">
             <div className="p-5 border-b border-stone-200 flex justify-between items-center">
               <h3 className="text-lg font-semibold">Bulk Import Guests</h3>
               <button onClick={() => setOpen(false)} className="p-1 hover:bg-stone-100 rounded"><X className="h-5 w-5" /></button>
             </div>
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-4 overflow-y-auto">
               <div className="text-sm text-stone-600">
                 Upload <b>CSV</b>, <b>Excel (.xlsx)</b>, or <b>QuickBooks export</b>.
                 Required columns: <code className="bg-stone-100 px-1 rounded">full_name</code>{" "}
@@ -135,8 +135,8 @@ export function AutoAssignButton({ onDone }) {
         <Wand2 className="h-4 w-4" /> Auto-Assign Seating
       </button>
       {open && (
-        <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4" onClick={() => setOpen(false)}>
-          <div className="bg-white rounded-xl max-w-3xl w-full shadow-2xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()} data-testid="auto-assign-modal">
+        <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-2 sm:p-4" onClick={() => setOpen(false)}>
+          <div className="bg-white rounded-xl w-full max-w-3xl shadow-2xl max-h-[95vh] flex flex-col" onClick={(e) => e.stopPropagation()} data-testid="auto-assign-modal">
             <div className="p-5 border-b border-stone-200 flex justify-between items-center">
               <h3 className="text-lg font-semibold flex items-center gap-2"><Wand2 className="h-5 w-5" /> Auto-Assign Seating</h3>
               <button onClick={() => { setOpen(false); setPlan(null); }} className="p-1 hover:bg-stone-100 rounded"><X className="h-5 w-5" /></button>
@@ -147,7 +147,7 @@ export function AutoAssignButton({ onDone }) {
                 (<code className="bg-stone-100 px-1 rounded">near_family_id</code>), fills tables to capacity, and
                 combines tables when a family is bigger than one table.
               </div>
-              <div className="flex items-end gap-3">
+              <div className="flex flex-col sm:flex-row sm:items-end gap-3">
                 <div className="flex-1">
                   <label className="block text-xs uppercase tracking-wide text-stone-500 mb-1">Ballroom (optional)</label>
                   <select data-testid="auto-assign-ballroom" value={ballroomId} onChange={(e) => setBallroomId(e.target.value)}
@@ -156,14 +156,16 @@ export function AutoAssignButton({ onDone }) {
                     {ballrooms.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
                   </select>
                 </div>
-                <button data-testid="auto-assign-preview" onClick={preview} disabled={busy}
-                  className="px-4 py-2 border border-stone-300 rounded hover:bg-stone-50 disabled:opacity-50">
-                  Preview Plan
-                </button>
-                <button data-testid="auto-assign-apply" onClick={apply} disabled={busy}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded disabled:opacity-50 flex items-center gap-2">
-                  {busy && <Loader2 className="h-4 w-4 animate-spin" />} Apply Now
-                </button>
+                <div className="flex gap-2">
+                  <button data-testid="auto-assign-preview" onClick={preview} disabled={busy}
+                    className="flex-1 sm:flex-none px-4 py-2 border border-stone-300 rounded hover:bg-stone-50 disabled:opacity-50">
+                    Preview Plan
+                  </button>
+                  <button data-testid="auto-assign-apply" onClick={apply} disabled={busy}
+                    className="flex-1 sm:flex-none px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded disabled:opacity-50 flex items-center justify-center gap-2">
+                    {busy && <Loader2 className="h-4 w-4 animate-spin" />} Apply Now
+                  </button>
+                </div>
               </div>
               {err && <div className="bg-red-50 border border-red-200 text-red-700 rounded p-3 text-sm">{err}</div>}
               {plan && (
@@ -177,8 +179,8 @@ export function AutoAssignButton({ onDone }) {
                       </div>
                     )}
                   </div>
-                  <div className="border border-stone-200 rounded overflow-hidden">
-                    <table className="w-full text-sm">
+                  <div className="border border-stone-200 rounded overflow-x-auto">
+                    <table className="w-full text-sm min-w-[480px]">
                       <thead className="bg-stone-50 border-b border-stone-200">
                         <tr>
                           <th className="text-left p-2">Guest</th>

@@ -49,7 +49,7 @@ export default function RosterTab({ isAdmin }) {
   };
 
   return (
-    <div className="p-6" data-testid="roster-tab">
+    <div className="p-3 sm:p-6" data-testid="roster-tab">
       <div className="flex justify-between items-start mb-4 gap-3 flex-wrap">
         <div>
           <h2 className="text-xl font-semibold text-stone-900">Guest Roster</h2>
@@ -109,11 +109,11 @@ export default function RosterTab({ isAdmin }) {
           className="w-full pl-10 pr-3 py-2 border border-stone-300 rounded" />
       </div>
 
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
-        <table className="w-full text-sm" data-testid="roster-table">
+      <div className="bg-white border border-stone-200 rounded-lg overflow-x-auto">
+        <table className="w-full text-sm min-w-[560px]" data-testid="roster-table">
           <thead className="bg-stone-50 border-b border-stone-200"><tr>
             <th className="text-left p-3">Invoice</th><th className="text-left p-3">Full Name</th>
-            <th className="text-left p-3">Email</th><th className="text-left p-3">Phone</th>
+            <th className="hidden sm:table-cell text-left p-3">Email</th><th className="hidden sm:table-cell text-left p-3">Phone</th>
             <th className="text-right p-3"></th>
           </tr></thead>
           <tbody>
@@ -123,8 +123,8 @@ export default function RosterTab({ isAdmin }) {
               <tr key={r.id} className="border-b border-stone-100 hover:bg-stone-50" data-testid={`roster-row-${r.id}`}>
                 <td className="p-3 font-mono text-stone-700">{r.invoiceNumber}</td>
                 <td className="p-3 font-medium text-stone-900">{r.fullName}</td>
-                <td className="p-3 text-stone-600 text-xs">{r.email || "—"}</td>
-                <td className="p-3 text-stone-600 text-xs">{r.phone || "—"}</td>
+                <td className="hidden sm:table-cell p-3 text-stone-600 text-xs">{r.email || "—"}</td>
+                <td className="hidden sm:table-cell p-3 text-stone-600 text-xs">{r.phone || "—"}</td>
                 <td className="p-3 text-right">
                   {isAdmin && (
                     <button data-testid={`roster-del-${r.id}`} onClick={() => remove(r.id)} className="text-stone-400 hover:text-red-600 p-1"><Trash2 className="h-4 w-4" /></button>

@@ -193,7 +193,7 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   const [conflicts, setConflicts] = useState({});       // { [tableId]: [conflict, ...] }
   const [historyStack, setHistoryStack] = useState({ undoAvailable: 0, redoAvailable: 0 });
   const [showGuestPanel, setShowGuestPanel] = useState(false);
-  const [showPalette, setShowPalette] = useState(true);
+  const [showPalette, setShowPalette] = useState(typeof window !== "undefined" && window.innerWidth >= 640);
   const [showPanel, setShowPanel] = useState(true);
   const [savingFp, setSavingFp] = useState(false);
   const [calibration, setCalibration] = useState({ step: "idle", p1: null, p2: null });
@@ -800,13 +800,13 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   return (
     <div className="fixed inset-0 z-40 bg-stone-900 flex flex-col" data-testid="ballroom-canvas">
       {/* Header / Top toolbar */}
-      <div className="bg-stone-800 text-white px-4 py-2 flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3 min-w-0">
-          <button onClick={onClose} data-testid="canvas-close" className="hover:bg-stone-700 px-2 py-1 rounded flex items-center gap-1 text-sm"><MoveLeft className="h-4 w-4" />Back</button>
-          <h2 className="text-lg font-semibold truncate">{ballroom.name}</h2>
-          <span className="text-xs text-stone-400 hidden sm:inline">{ballroom.widthFt}×{ballroom.heightFt}ft · {tables.length} tables · {objects.length} objects</span>
+      <div className="bg-stone-800 text-white px-2 sm:px-4 py-2 flex items-center justify-between gap-2 sm:gap-3 flex-wrap">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+          <button onClick={onClose} data-testid="canvas-close" className="hover:bg-stone-700 px-2 py-1 rounded flex items-center gap-1 text-sm"><MoveLeft className="h-4 w-4" /><span className="hidden sm:inline">Back</span></button>
+          <h2 className="text-sm sm:text-lg font-semibold truncate">{ballroom.name}</h2>
+          <span className="text-xs text-stone-400 hidden md:inline">{ballroom.widthFt}×{ballroom.heightFt}ft · {tables.length} tables · {objects.length} objects</span>
         </div>
-        <div className="flex items-center gap-1 flex-wrap">
+        <div className="flex items-center gap-1 flex-wrap overflow-x-auto no-scrollbar">
           {isAdmin && (
             <>
               <input ref={fileRef} type="file" accept="image/*,application/pdf,.pdf" onChange={e => uploadFloorPlan(e.target.files?.[0])} className="hidden" data-testid="floor-plan-file" />
@@ -866,7 +866,13 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
       <div className="flex-1 flex overflow-hidden">
         {/* ─── Palette ──────────────────────────────────────────────────── */}
         {isAdmin && showPalette && (
-          <div className="w-48 bg-stone-100 border-r border-stone-300 overflow-y-auto p-2" data-testid="canvas-palette">
+          <div className="absolute inset-y-0 left-0 z-20 sm:relative sm:inset-auto w-56 sm:w-48 max-w-[80vw] bg-stone-100 border-r border-stone-300 overflow-y-auto p-2 shadow-lg sm:shadow-none" data-testid="canvas-palette">
+            <div className="flex sm:hidden items-center justify-between mb-2 px-1">
+              <span className="text-xs font-semibold uppercase tracking-wide text-stone-700">Palette</span>
+              <button onClick={() => setShowPalette(false)} className="p-1 rounded hover:bg-stone-200" data-testid="palette-close-mobile">
+                <XIcon className="h-4 w-4" />
+              </button>
+            </div>
             {palette.map(group => (
               <div key={group.group} className="mb-3">
                 <div className="text-[10px] uppercase tracking-wide text-stone-500 mb-1 px-1 font-semibold">{group.group}</div>
@@ -903,7 +909,11 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
           </div>
         )}
         {!showPalette && isAdmin && (
-          <button onClick={() => setShowPalette(true)} className="bg-stone-800 text-white px-2 text-xs h-8 my-1 rounded-r">Show palette</button>
+          <button onClick={() => setShowPalette(true)}
+            className="absolute top-1 left-1 z-20 sm:relative sm:top-auto sm:left-auto bg-stone-800 text-white px-2 text-xs h-8 my-1 rounded sm:rounded-r flex items-center gap-1"
+            data-testid="palette-open">
+            <Settings2 className="h-3 w-3" /> Palette
+          </button>
         )}
 
         {/* ─── Canvas ──────────────────────────────────────────────────── */}
@@ -1352,7 +1362,7 @@ function CalibrationHelp({ step, onFinish, onCancel }) {
 // ─── Side Panel ──────────────────────────────────────────────────────────────
 function SidePanel({ ballroom, selObj, onUpdateBallroom, onUpdateRoomDims, onUpdateTable, onUpdateObject, onRemove }) {
   return (
-    <div className="w-72 bg-stone-50 border-l border-stone-300 overflow-y-auto p-3 text-sm" data-testid="side-panel">
+    <div className="absolute inset-x-0 bottom-0 z-20 max-h-[55vh] border-t sm:border-t-0 sm:border-l border-stone-300 sm:relative sm:max-h-none sm:w-72 bg-stone-50 overflow-y-auto p-3 text-sm shadow-2xl sm:shadow-none" data-testid="side-panel">
       <div className="font-semibold text-stone-800 mb-2 flex items-center gap-2"><Settings2 className="h-4 w-4" />Properties</div>
 
       {/* Room (ballroom) section — always visible */}
@@ -1627,7 +1637,7 @@ function CanvasGuestPanel({ ballroomId, tables, conflicts, onClose }) {
   };
 
   return (
-    <div className="absolute top-3 right-3 w-80 max-h-[80vh] bg-white rounded-xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col z-30"
+    <div className="absolute inset-2 sm:inset-auto sm:top-3 sm:right-3 sm:w-80 sm:max-h-[80vh] bg-white rounded-xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col z-30"
          data-testid="canvas-guest-panel">
       <div className="px-3 py-2 bg-stone-900 text-white flex items-center justify-between">
         <div className="font-medium flex items-center gap-2">

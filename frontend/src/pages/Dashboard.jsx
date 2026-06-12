@@ -31,12 +31,12 @@ function StatsBar({ stats }) {
     ["High Chairs", stats?.totalHighChairs ?? 0],
   ];
   return (
-    <div className="sticky top-0 z-20 bg-white border-b border-stone-200 px-6 py-3" data-testid="stats-bar">
-      <div className="flex flex-wrap gap-6">
+    <div className="sticky top-0 z-20 bg-white border-b border-stone-200 px-3 sm:px-6 py-2 sm:py-3" data-testid="stats-bar">
+      <div className="flex gap-4 sm:gap-6 overflow-x-auto -mx-1 px-1 no-scrollbar">
         {items.map(([l, v]) => (
-          <div key={l} className="flex flex-col">
-            <span className="text-xs text-stone-500 uppercase tracking-wide">{l}</span>
-            <span className="text-xl font-semibold text-stone-900" data-testid={`stat-${l.toLowerCase().replace(/\s|%/g, "-")}`}>{v}</span>
+          <div key={l} className="flex flex-col shrink-0">
+            <span className="text-[10px] sm:text-xs text-stone-500 uppercase tracking-wide whitespace-nowrap">{l}</span>
+            <span className="text-base sm:text-xl font-semibold text-stone-900" data-testid={`stat-${l.toLowerCase().replace(/\s|%/g, "-")}`}>{v}</span>
           </div>
         ))}
       </div>
@@ -116,11 +116,11 @@ function GuestDrawer({ guest, onClose, onUpdated }) {
 
   return (
     <div className="fixed inset-0 z-30 bg-black/40 flex justify-end" onClick={onClose} data-testid="guest-drawer">
-      <div className="bg-white w-full max-w-lg h-full overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="p-6 border-b border-stone-200 flex justify-between items-start sticky top-0 bg-white">
+      <div className="bg-white w-full sm:max-w-lg h-full overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="p-4 sm:p-6 border-b border-stone-200 flex justify-between items-start sticky top-0 bg-white">
           <div>
-            <h2 className="text-2xl font-semibold text-stone-900">{guest.fullName}</h2>
-            <p className="text-stone-600">{guest.invoiceNumber} · {guest.partySize} guests</p>
+            <h2 className="text-xl sm:text-2xl font-semibold text-stone-900">{guest.fullName}</h2>
+            <p className="text-stone-600 text-sm">{guest.invoiceNumber} · {guest.partySize} guests</p>
             {guest.isDuplicate && <span className="inline-block mt-2 px-2 py-0.5 bg-amber-100 text-amber-800 text-xs rounded">DUPLICATE</span>}
           </div>
           <div className="flex items-center gap-2">
@@ -131,7 +131,7 @@ function GuestDrawer({ guest, onClose, onUpdated }) {
             <button data-testid="drawer-close" onClick={onClose} className="p-2 hover:bg-stone-100 rounded"><X className="h-5 w-5" /></button>
           </div>
         </div>
-        <div className="p-6 space-y-6">
+        <div className="p-4 sm:p-6 space-y-5 sm:space-y-6">
           {!editing && (
             <div>
               <h3 className="font-medium text-stone-900 mb-2">Details</h3>
@@ -287,22 +287,22 @@ function GuestList({ openGuest }) {
   };
 
   return (
-    <div className="p-6" data-testid="guests-tab">
-      <div className="flex flex-wrap gap-3 mb-4 items-center">
-        <div className="relative flex-1 min-w-64">
+    <div className="p-3 sm:p-6" data-testid="guests-tab">
+      <div className="flex flex-wrap gap-2 sm:gap-3 mb-4 items-center">
+        <div className="relative flex-1 min-w-full sm:min-w-64">
           <Search className="absolute left-3 top-3 h-4 w-4 text-stone-400" />
           <input data-testid="guest-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or invoice..."
-            className="w-full pl-10 pr-3 py-2 border border-stone-300 rounded" />
+            className="w-full pl-10 pr-3 py-2 border border-stone-300 rounded text-sm" />
         </div>
         <select data-testid="status-filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-          className="px-3 py-2 border border-stone-300 rounded">
+          className="px-3 py-2 border border-stone-300 rounded text-sm">
           <option value="">All statuses</option><option value="unassigned">Unassigned</option>
           <option value="partially_assigned">Partial</option><option value="fully_assigned">Seated</option>
         </select>
-        <label className="flex items-center gap-2 px-3 py-2 border border-stone-300 rounded cursor-pointer">
+        <label className="hidden sm:flex items-center gap-2 px-3 py-2 border border-stone-300 rounded cursor-pointer text-sm">
           <input data-testid="dup-filter" type="checkbox" checked={dupOnly} onChange={e => setDupOnly(e.target.checked)} /> Duplicates only
         </label>
-        <label className="flex items-center gap-2 px-3 py-2 border border-stone-300 rounded cursor-pointer">
+        <label className="hidden sm:flex items-center gap-2 px-3 py-2 border border-stone-300 rounded cursor-pointer text-sm">
           <input data-testid="hc-filter" type="checkbox" checked={hcOnly} onChange={e => setHcOnly(e.target.checked)} /> High chairs
         </label>
         <BulkImportButton onDone={load} />
@@ -311,14 +311,17 @@ function GuestList({ openGuest }) {
       {moveErr && (
         <div className="mb-3 bg-red-50 border border-red-200 text-red-700 rounded p-3 text-sm" data-testid="move-error">{moveErr}</div>
       )}
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
-        <table className="w-full text-sm" data-testid="guest-table">
+      <div className="bg-white border border-stone-200 rounded-lg overflow-x-auto">
+        <table className="w-full text-sm min-w-[640px]" data-testid="guest-table">
           <thead className="bg-stone-50 border-b border-stone-200"><tr>
-            <th className="text-left p-3">Name</th><th className="text-left p-3">Invoice</th>
-            <th className="text-left p-3">Party</th><th className="text-left p-3">Family</th>
+            <th className="text-left p-3">Name</th>
+            <th className="hidden sm:table-cell text-left p-3">Invoice</th>
+            <th className="text-left p-3">Party</th>
+            <th className="hidden md:table-cell text-left p-3">Family</th>
             <th className="text-left p-3">Table</th>
-            <th className="text-left p-3">Status</th>
-            <th className="text-left p-3">Flags</th><th className="text-left p-3">Submitted</th>
+            <th className="hidden sm:table-cell text-left p-3">Status</th>
+            <th className="hidden md:table-cell text-left p-3">Flags</th>
+            <th className="hidden lg:table-cell text-left p-3">Submitted</th>
           </tr></thead>
           <tbody>
             {loading && <tr><td colSpan={8} className="p-8 text-center text-stone-500"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>}
@@ -328,16 +331,16 @@ function GuestList({ openGuest }) {
               return (
                 <tr key={g.id} className="border-b border-stone-100 hover:bg-stone-50" data-testid={`guest-row-${g.id}`}>
                   <td className="p-3 font-medium text-stone-900 cursor-pointer" onClick={() => openGuest(g)}>{g.fullName}</td>
-                  <td className="p-3 text-stone-700 cursor-pointer" onClick={() => openGuest(g)}>{g.invoiceNumber}</td>
+                  <td className="hidden sm:table-cell p-3 text-stone-700 cursor-pointer" onClick={() => openGuest(g)}>{g.invoiceNumber}</td>
                   <td className="p-3 cursor-pointer" onClick={() => openGuest(g)}>{g.partySize}</td>
-                  <td className="p-3 text-stone-500 cursor-pointer" onClick={() => openGuest(g)}>{g.familyId || "—"}</td>
+                  <td className="hidden md:table-cell p-3 text-stone-500 cursor-pointer" onClick={() => openGuest(g)}>{g.familyId || "—"}</td>
                   <td className="p-3">
                     <select
                       data-testid={`guest-table-select-${g.id}`}
                       value={g.tableId || ""}
                       onChange={(e) => moveFamily(g, e.target.value)}
                       onClick={(e) => e.stopPropagation()}
-                      className="px-2 py-1 border border-stone-300 rounded text-sm bg-white"
+                      className="px-2 py-1 border border-stone-300 rounded text-xs sm:text-sm bg-white"
                       title={g.familyId ? `Moves the entire family ${g.familyId}` : "Moves just this guest"}
                     >
                       <option value="">— unassigned —</option>
@@ -347,15 +350,15 @@ function GuestList({ openGuest }) {
                         </option>
                       ))}
                     </select>
-                    {num && <span className="ml-2 text-xs text-stone-500">#{num}</span>}
+                    {num && <span className="ml-2 text-xs text-stone-500 hidden sm:inline">#{num}</span>}
                   </td>
-                  <td className="p-3 cursor-pointer" onClick={() => openGuest(g)}><span className="px-2 py-0.5 rounded text-xs bg-stone-100">{g.status}</span></td>
-                  <td className="p-3 space-x-1 cursor-pointer" onClick={() => openGuest(g)}>
+                  <td className="hidden sm:table-cell p-3 cursor-pointer" onClick={() => openGuest(g)}><span className="px-2 py-0.5 rounded text-xs bg-stone-100">{g.status}</span></td>
+                  <td className="hidden md:table-cell p-3 space-x-1 cursor-pointer" onClick={() => openGuest(g)}>
                     {g.isDuplicate && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-xs rounded">DUP</span>}
                     {g.highChairNeeded && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-xs rounded">HC×{g.highChairCount}</span>}
                     {g.specialNotes && <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-xs rounded">NOTE</span>}
                   </td>
-                  <td className="p-3 text-stone-500 text-xs cursor-pointer" onClick={() => openGuest(g)}>{new Date(g.submissionTimestamp).toLocaleString()}</td>
+                  <td className="hidden lg:table-cell p-3 text-stone-500 text-xs cursor-pointer" onClick={() => openGuest(g)}>{new Date(g.submissionTimestamp).toLocaleString()}</td>
                 </tr>
               );
             })}
@@ -370,8 +373,8 @@ function UnassignedQueue({ openGuest }) {
   const [list, setList] = useState([]);
   useEffect(() => { apiClient.get("/guests/unassigned").then(r => setList(r.data)); }, []);
   return (
-    <div className="p-6" data-testid="unassigned-tab">
-      <h2 className="text-xl font-semibold text-stone-900 mb-4">Unassigned Queue ({list.length})</h2>
+    <div className="p-3 sm:p-6" data-testid="unassigned-tab">
+      <h2 className="text-lg sm:text-xl font-semibold text-stone-900 mb-4">Unassigned Queue ({list.length})</h2>
       <div className="grid gap-3">
         {list.map(g => (
           <div key={g.id} onClick={() => openGuest(g)} className="bg-white border border-stone-200 rounded-lg p-4 hover:shadow cursor-pointer" data-testid={`unassigned-${g.id}`}>
@@ -405,8 +408,8 @@ function PreferencesTab() {
     load();
   };
   return (
-    <div className="p-6" data-testid="preferences-tab">
-      <div className="flex gap-2 mb-4">
+    <div className="p-3 sm:p-6" data-testid="preferences-tab">
+      <div className="flex flex-wrap gap-2 mb-4">
         {[["unresolved", "Unresolved"], ["mutual", "Mutual Matches"], ["one-way", "One-Way"]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)} data-testid={`pref-tab-${k}`}
             className={`px-4 py-2 rounded ${tab === k ? "bg-stone-900 text-white" : "bg-white border border-stone-300"}`}>{l}</button>
@@ -476,12 +479,12 @@ function ActivityLog() {
   const [log, setLog] = useState([]);
   useEffect(() => { apiClient.get("/activity-log").then(r => setLog(r.data)); }, []);
   return (
-    <div className="p-6" data-testid="activity-tab">
-      <h2 className="text-xl font-semibold text-stone-900 mb-4">Activity Log</h2>
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
+    <div className="p-3 sm:p-6" data-testid="activity-tab">
+      <h2 className="text-lg sm:text-xl font-semibold text-stone-900 mb-4">Activity Log</h2>
+      <div className="bg-white border border-stone-200 rounded-lg overflow-x-auto">
+        <table className="w-full text-sm min-w-[560px]">
           <thead className="bg-stone-50 border-b border-stone-200"><tr>
-            <th className="text-left p-3">When</th><th className="text-left p-3">Staff</th>
+            <th className="text-left p-3 whitespace-nowrap">When</th><th className="text-left p-3">Staff</th>
             <th className="text-left p-3">Action</th><th className="text-left p-3">Details</th>
           </tr></thead>
           <tbody>
@@ -517,20 +520,20 @@ function StaffAdmin() {
     await apiClient.patch(`/staff/${id}`, { [field]: val }); load();
   };
   return (
-    <div className="p-6" data-testid="staff-tab">
-      <h2 className="text-xl font-semibold text-stone-900 mb-4">Staff Members</h2>
-      <form onSubmit={create} className="bg-white border border-stone-200 rounded-lg p-4 mb-6 grid grid-cols-1 md:grid-cols-5 gap-2">
+    <div className="p-3 sm:p-6" data-testid="staff-tab">
+      <h2 className="text-lg sm:text-xl font-semibold text-stone-900 mb-4">Staff Members</h2>
+      <form onSubmit={create} className="bg-white border border-stone-200 rounded-lg p-3 sm:p-4 mb-6 grid grid-cols-1 md:grid-cols-5 gap-2">
         <input data-testid="new-staff-username" placeholder="username" value={form.username} onChange={e => setForm({...form, username: e.target.value})} required
-          className="px-3 py-2 border border-stone-300 rounded" />
+          className="px-3 py-2 border border-stone-300 rounded text-sm" />
         <input data-testid="new-staff-display" placeholder="Display name" value={form.displayName} onChange={e => setForm({...form, displayName: e.target.value})} required
-          className="px-3 py-2 border border-stone-300 rounded" />
+          className="px-3 py-2 border border-stone-300 rounded text-sm" />
         <input data-testid="new-staff-password" type="password" placeholder="password" value={form.password} onChange={e => setForm({...form, password: e.target.value})} required
-          className="px-3 py-2 border border-stone-300 rounded" />
-        <label className="flex items-center gap-2 px-3"><input type="checkbox" checked={form.isAdmin} onChange={e => setForm({...form, isAdmin: e.target.checked})} /> Admin</label>
-        <button data-testid="create-staff-btn" type="submit" className="bg-stone-900 text-white px-4 py-2 rounded hover:bg-stone-800">Add Staff</button>
+          className="px-3 py-2 border border-stone-300 rounded text-sm" />
+        <label className="flex items-center gap-2 px-3 text-sm"><input type="checkbox" checked={form.isAdmin} onChange={e => setForm({...form, isAdmin: e.target.checked})} /> Admin</label>
+        <button data-testid="create-staff-btn" type="submit" className="bg-stone-900 text-white px-4 py-2 rounded hover:bg-stone-800 text-sm">Add Staff</button>
       </form>
-      <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="bg-white border border-stone-200 rounded-lg overflow-x-auto">
+        <table className="w-full text-sm min-w-[520px]">
           <thead className="bg-stone-50 border-b"><tr>
             <th className="text-left p-3">Username</th><th className="text-left p-3">Display</th>
             <th className="text-left p-3">Admin</th><th className="text-left p-3">Active</th><th className="text-left p-3">Last Login</th>
@@ -579,9 +582,9 @@ function AnalyticsTab() {
       highlight: data.activeConflicts > 0 ? "bg-red-50 border-red-200 text-red-800" : "" },
   ];
   return (
-    <div className="p-6 space-y-6" data-testid="analytics-tab">
-      <h2 className="text-xl font-semibold flex items-center gap-2"><BarChart3 className="h-5 w-5" /> Event Analytics</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+    <div className="p-3 sm:p-6 space-y-4 sm:space-y-6" data-testid="analytics-tab">
+      <h2 className="text-lg sm:text-xl font-semibold flex items-center gap-2"><BarChart3 className="h-5 w-5" /> Event Analytics</h2>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         {cards.map((c) => (
           <div key={c.dt} data-testid={c.dt}
             className={`bg-white border border-stone-200 rounded-lg p-4 ${c.highlight || ""}`}>
@@ -654,9 +657,9 @@ export default function Dashboard() {
   if (!user) return <Navigate to="/staff/login" replace />;
   return (
     <div className="min-h-screen bg-stone-100" data-testid="dashboard">
-      <header className="bg-stone-900 text-white px-6 py-3 flex justify-between items-center">
-        <div className="font-serif text-xl">Passover Seating Manager</div>
-        <div className="flex items-center gap-3">
+      <header className="bg-stone-900 text-white px-3 sm:px-6 py-2 sm:py-3 flex justify-between items-center gap-2">
+        <div className="font-serif text-base sm:text-xl whitespace-nowrap truncate">Passover Seating</div>
+        <div className="flex items-center gap-1 sm:gap-3 shrink-0">
           <button onClick={undo} disabled={!history.undoAvailable}
             title={`Undo (Ctrl+Z) — ${history.undoAvailable} available`}
             data-testid="global-undo"
@@ -669,17 +672,20 @@ export default function Dashboard() {
             className="p-1.5 rounded hover:bg-stone-800 disabled:opacity-30 disabled:cursor-not-allowed">
             <Redo2 className="h-4 w-4" />
           </button>
-          <span className="text-sm">{user.displayName} {user.isAdmin && <span className="text-amber-300">(admin)</span>}</span>
-          <button data-testid="logout-btn" onClick={logout} className="flex items-center gap-1 text-sm hover:text-amber-300"><LogOut className="h-4 w-4" /> Logout</button>
+          <span className="hidden sm:inline text-sm">{user.displayName} {user.isAdmin && <span className="text-amber-300">(admin)</span>}</span>
+          <button data-testid="logout-btn" onClick={logout}
+            className="flex items-center gap-1 text-xs sm:text-sm hover:text-amber-300 px-1 sm:px-2">
+            <LogOut className="h-4 w-4" /><span className="hidden sm:inline">Logout</span>
+          </button>
         </div>
       </header>
       <StatsBar stats={stats} />
-      <div className="flex bg-white border-b border-stone-200 px-6 overflow-x-auto">
+      <div className="flex bg-white border-b border-stone-200 px-2 sm:px-6 overflow-x-auto no-scrollbar">
         {TABS.filter(t => t.id !== "staff" || user.isAdmin).map(t => {
           const Icon = t.icon;
           return (
             <button key={t.id} onClick={() => setTab(t.id)} data-testid={`tab-${t.id}`}
-              className={`px-4 py-3 flex items-center gap-2 text-sm border-b-2 whitespace-nowrap ${tab === t.id ? "border-stone-900 text-stone-900 font-medium" : "border-transparent text-stone-600 hover:text-stone-900"}`}>
+              className={`px-3 sm:px-4 py-3 flex items-center gap-1.5 sm:gap-2 text-xs sm:text-sm border-b-2 whitespace-nowrap shrink-0 ${tab === t.id ? "border-stone-900 text-stone-900 font-medium" : "border-transparent text-stone-600 hover:text-stone-900"}`}>
               <Icon className="h-4 w-4" /> {t.label}
             </button>
           );
