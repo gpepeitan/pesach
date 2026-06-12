@@ -647,9 +647,10 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
                     const Icon = p.icon;
                     return (
                       <button key={p.paletteKey || `${p.type}-${idx}`} onClick={() => addFromPalette(p)} data-testid={`palette-${p.paletteKey || p.type}`}
-                        className="bg-white border border-stone-300 hover:border-stone-900 hover:bg-stone-50 rounded p-2 text-xs flex flex-col items-center gap-1">
-                        <Icon className="h-4 w-4 text-stone-700" />
-                        <span className="text-[10px] text-stone-700 leading-tight text-center">{p.label}</span>
+                        title={p.label}
+                        className="bg-white border border-stone-300 hover:border-stone-900 hover:bg-stone-50 rounded p-2 text-xs flex flex-col items-center gap-1 overflow-hidden">
+                        <Icon className="h-4 w-4 text-stone-700 shrink-0" />
+                        <span className="text-[10px] text-stone-700 leading-tight text-center truncate w-full">{p.label}</span>
                       </button>
                     );
                   })}

@@ -69,6 +69,49 @@
 
 ---
 
+## Phase 4.5 — Automated Seating & Inventory Logic (DONE 2026-02)
+
+### Table Inventory (staff-defined, not hardcoded)
+- [x] `table_types` table + CRUD (`/api/table-types`)
+- [x] Admin "Table Inventory" tab in the dashboard
+- [x] Canvas "Add Table" palette dynamically loads only inventory items — no custom sizes
+- [x] Creating a table from the palette POSTs with `typeId` and inherits shape/seats/dims
+
+### Visual seating indicators
+- [x] Chair = green when a guest is assigned to that seat, gray when empty
+- [x] Table = red border + ⚠ when seated count exceeds effective capacity
+- [x] Combined-table groups (same `group_id`) use summed capacity so the anchor isn't red
+
+### Automated seating engine
+- [x] Group unassigned guests by `family_id`
+- [x] Prioritize seating families adjacent to `near_family_id` (adjacency bonus)
+- [x] Fill tables to capacity before opening a new one
+- [x] Combine multiple tables under one `group_id` when a family > any single table
+- [x] Reserved-group tables are excluded from other families' single-table fits
+- [x] `POST /api/seating/auto-assign` — apply=true persists, apply=false previews
+- [x] Auto-Assign modal in Guest List with Preview + Apply
+
+### Bulk import (CSV / Excel / QuickBooks)
+- [x] `POST /api/guests/bulk-import` — accepts raw CSV, multipart CSV, multipart .xlsx
+- [x] Bulk Import modal in Guest List
+- [x] Column aliasing (full_name/name, invoice_number/invoice, party_size/guests, etc.)
+- [x] Upserts by invoice_number, returns inserted/updated/skipped + per-row errors
+
+### Skip / Dev login
+- [x] `POST /api/auth/dev-login` gated by `DEV_AUTH_BYPASS=1` in backend/.env
+- [x] Yellow "Skip / Dev login" button on the staff login page
+
+### Guest list table column
+- [x] New "Table" column shows assigned table number
+- [x] Inline `<select>` moves the entire family (`POST /api/guests/family/move`)
+- [x] Friendly error when family won't fit the target table (409 capacity_exceeded)
+
+### Database moved to Supabase (per user request 2026-02)
+- [x] `DATABASE_URL` switched to Supabase transaction pooler
+- [x] Idempotent schema bootstrap on startup (no data wipe risk)
+
+---
+
 ## Phase 5 — Commercial Readiness (NEXT)
 
 The full brief is preserved in [`FUTURE_COMMERCIAL_READINESS.md`](./FUTURE_COMMERCIAL_READINESS.md).

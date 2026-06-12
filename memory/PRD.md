@@ -65,9 +65,19 @@ Originally bootstrapped in Replit on Node/Express/Postgres/Drizzle. Ported to Em
 All Phase 1 + 2 + future-phase tables created: `guests`, `staff_users`, `staff_notes`, `preference_resolutions`, `ballrooms`, `tables`, `seat_assignments`, `canvas_objects`, `activity_log`, `archives`.
 
 ## Test Status
-- **Backend:** 101/101 pytest cases pass (Phase 1+2: 39 + Phase 3: 31 + Roster: 19 + Phase 4: 12)
-- **Frontend:** All critical flows verified via Playwright across 4 testing iterations
+- **Backend:** 125/125 pytest cases pass (Phase 1+2: 39 + Phase 3: 31 + Roster: 19 + Phase 4: 12 + Phase 4.5: 24)
+- **Frontend:** All critical flows verified via Playwright across 5 testing iterations
 - **Bugs fixed during iterations:** (i1) Dashboard.jsx useEffect-returning-Promise; (i2) server.py preference-match tuple-row access; (i3) db.py ALTER TABLE ordering; (i4) BallroomCanvas.jsx nullish-coalescing precedence on drag offset
+
+## Phase 4.5 — Automated Seating & Inventory Logic (2026-02)
+**Shipped:**
+- DB switched to Supabase Postgres pooler (idempotent schema bootstrap, no data wipe).
+- New `table_types` inventory + admin tab. Canvas "Add Table" palette is inventory-locked (no custom sizes).
+- Visual seating indicators: **green** chairs for assigned seats, **gray** for empty, **red** table border + ⚠ when over-capacity. Combined-table groups use summed capacity.
+- Auto-Assign engine: groups guests by `family_id`, prioritizes `near_family_id` adjacency, fills tables to capacity, and **combines** multiple tables under one `group_id` when a family > single-table capacity. Preview + Apply.
+- Bulk guest import: CSV (raw + multipart) + Excel (.xlsx) + QuickBooks-style headers via column aliasing. Upserts by invoice_number.
+- Skip / Dev login button on staff login (gated by `DEV_AUTH_BYPASS=1`).
+- Guest list: new Table column with inline family-move dropdown. Capacity-exceeded → friendly UI error.
 
 ## Backlog — Remaining
 ### P0 / Phase 4: Ballroom Canvas Designer

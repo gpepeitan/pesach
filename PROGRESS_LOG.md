@@ -71,3 +71,22 @@
 3. Pick up Phase 5 (commercial readiness) per `FUTURE_COMMERCIAL_READINESS.md` — **stay local first**, do not wire Supabase production until validated locally.
 
 ---
+
+## 2026-02-12 — Phase 4.5: Automated Seating & Inventory Logic
+
+**Scope shipped:**
+- Backend switched to Supabase Postgres (transaction pooler). Schema bootstrap is idempotent so existing data is preserved.
+- New `table_types` inventory table + CRUD endpoints. Canvas "Add Table" palette is now driven entirely by inventory — no custom sizes.
+- New "Table Inventory" admin tab in dashboard (`TableInventoryTab.jsx`).
+- Visual seating indicators: green chairs for assigned seats, gray for empty, red table border (`⚠`) when over-capacity. Combined-table groups use summed capacity.
+- Automated seating engine: groups guests by `family_id`, prioritizes `near_family_id` adjacency, fills tables to capacity, and links multiple tables under one `group_id` when a family > any single-table capacity. Preview + Apply flow.
+- Bulk guest import accepts CSV (raw + multipart) and Excel (.xlsx) with column aliasing. Upserts by invoice_number.
+- "Skip / Dev login" button on staff login (gated by `DEV_AUTH_BYPASS=1`).
+- Guest list now shows an inline table dropdown that moves the entire family. Friendly capacity-error UX.
+
+**Tests:** Phase-5 testing agent run → 24/24 backend pytest pass, 100% frontend phase-5 flows verified. Cosmetic findings (palette tile truncation, dead-store cleanup) fixed in the same session.
+
+**Files touched:**
+- backend: `server.py`, `db.py`, `requirements.txt` (`openpyxl`)
+- frontend: `Dashboard.jsx`, `BallroomCanvas.jsx`, `StaffLogin.jsx`, `lib/auth.jsx`, new `TableInventoryTab.jsx`, new `components/GuestBulkActions.jsx`
+- env: `backend/.env` (DATABASE_URL = Supabase pooler, DEV_AUTH_BYPASS=1)

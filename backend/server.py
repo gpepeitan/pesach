@@ -1637,8 +1637,6 @@ async def move_family(body: FamilyMoveBody, user: dict = Depends(get_current_use
                                      {"f": fid})).mappings().all()
     else:
         members = [g]
-        members = (await db.execute(text("SELECT id, party_size FROM guests WHERE id=:i"),
-                                     {"i": body.guestId})).mappings().all()
 
     if body.targetTableId:
         t = (await db.execute(text("SELECT ballroom_id, max_capacity FROM tables WHERE id=:i"),
