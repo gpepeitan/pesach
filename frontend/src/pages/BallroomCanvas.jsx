@@ -28,8 +28,12 @@ import {
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdn.jsdelivr.net/npm/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const TABLE_COLOR_FILL = { gray: "#e7e5e4", blue: "#bfdbfe", yellow: "#fde68a", green: "#a7f3d0" };
-const TABLE_COLOR_STROKE = { gray: "#a8a29e", blue: "#3b82f6", yellow: "#d97706", green: "#10b981" };
+const TABLE_COLOR_FILL = { gray: "#e7e5e4", blue: "#bfdbfe", yellow: "#fde68a", green: "#a7f3d0", red: "#fecaca" };
+const TABLE_COLOR_STROKE = { gray: "#a8a29e", blue: "#3b82f6", yellow: "#d97706", green: "#10b981", red: "#b91c1c" };
+const CHAIR_OCCUPIED_FILL = "#22c55e";   // green = assigned
+const CHAIR_OCCUPIED_STROKE = "#15803d";
+const CHAIR_EMPTY_FILL = "#d6d3d1";       // gray = unassigned / extra
+const CHAIR_EMPTY_STROKE = "#78716c";
 
 // Palette items (icons + default sizes in inches; rendering converts via pxPerFt).
 const PALETTE = [
@@ -136,16 +140,16 @@ function chairsForTable(t, dims) {
   const chairR = Math.max(7, dims.w * 0.06);
   const gap = 4;
   const out = [];
+  const seatedCount = Math.max(0, t.seatsTaken || 0);
+  const mark = (i, c) => ({ ...c, occupied: i < seatedCount });
   if (dims.isRound) {
     const cx = dims.w / 2, cy = dims.h / 2;
     const r = dims.radius + chairR + gap;
     for (let i = 0; i < N; i++) {
       const a = (2 * Math.PI * i) / N - Math.PI / 2;
-      out.push({ cx: cx + r * Math.cos(a), cy: cy + r * Math.sin(a), r: chairR });
+      out.push(mark(i, { cx: cx + r * Math.cos(a), cy: cy + r * Math.sin(a), r: chairR }));
     }
   } else {
-    // Distribute chairs along the perimeter starting at the top-left, going CW.
-    // Each chair is offset outward from its side by (chairR + gap).
     const W = dims.w, H = dims.h;
     const perim = 2 * (W + H);
     const step = perim / N;
@@ -156,7 +160,7 @@ function chairsForTable(t, dims) {
       else if (d < W + H)     { cx = W + chairR + gap; cy = d - W; }
       else if (d < 2 * W + H) { cx = W - (d - W - H);  cy = H + chairR + gap; }
       else                    { cx = -chairR - gap;    cy = H - (d - 2 * W - H); }
-      out.push({ cx, cy, r: chairR });
+      out.push(mark(i, { cx, cy, r: chairR }));
     }
   }
   return out;
@@ -168,6 +172,7 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   const [ballroom, setBallroom] = useState(initialBallroom);
   const [tables, setTables] = useState([]);
   const [objects, setObjects] = useState([]);
+  const [tableTypes, setTableTypes] = useState([]);  // inventory from /api/table-types
 
   // Interaction state
   const [drag,    setDrag]    = useState(null); // {kind:'table'|'object', id, dx, dy, current:{x,y}}
@@ -195,20 +200,53 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   const canvasW   = (ballroom?.widthFt  || 80) * pxPerFt;
   const canvasH   = (ballroom?.heightFt || 60) * pxPerFt;
 
+  // group capacity map: sum capacities for tables sharing a group_id (combined tables)
+  const groupCap = useMemo(() => {
+    const m = {};
+    for (const t of tables) {
+      if (!t.groupId) continue;
+      m[t.groupId] = (m[t.groupId] || 0) + (t.maxCapacity || 0);
+    }
+    return m;
+  }, [tables]);
+
+  // Dynamic Tables palette built from /api/table-types (admin-managed inventory).
+  // Other groups (doors / rooms / features) stay static.
+  const palette = useMemo(() => {
+    const tablesGroup = {
+      group: "Tables (inventory)",
+      items: tableTypes.length === 0
+        ? [{ disabled: true, label: "No table types yet — add in Table Inventory tab", isPlaceholder: true }]
+        : tableTypes.map(tt => ({
+            paletteKey: `tt-${tt.id}`,
+            label: tt.name,
+            icon: tt.shape === "round" ? Circle : (tt.shape === "square" ? Square : RectangleHorizontal),
+            widthIn: tt.widthIn, lengthIn: tt.lengthIn,
+            isTable: true,
+            shape: tt.shape,
+            typeId: tt.id,
+            defaultSeats: tt.defaultSeats,
+          })),
+    };
+    return [tablesGroup, ...PALETTE.filter(g => g.group !== "Tables")];
+  }, [tableTypes]);
+
   // ─── Load ────────────────────────────────────────────────────────────────
   const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     if (!initialBallroom) return;
     let cancelled = false;
     (async () => {
-      const [t, o, b] = await Promise.all([
+      const [t, o, b, tt] = await Promise.all([
         apiClient.get(`/tables?ballroomId=${initialBallroom.id}`),
         apiClient.get(`/ballrooms/${initialBallroom.id}/canvas-objects`),
         apiClient.get(`/ballrooms`),
+        apiClient.get(`/table-types`),
       ]);
       if (cancelled) return;
       setTables(t.data);
       setObjects(o.data);
+      setTableTypes((tt.data || []).filter(x => x.isActive));
       const fresh = b.data.find(x => x.id === initialBallroom.id);
       if (fresh) setBallroom(fresh);
     })().catch(console.error);
@@ -437,9 +475,10 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
       try {
         await apiClient.post("/tables", {
           tableNumber: next, label: null, ballroomId: ballroom.id,
-          shape: item.shape, maxCapacity: 10,
+          shape: item.shape, maxCapacity: item.defaultSeats || 10,
           canvasX: center.x, canvasY: center.y,
           widthIn: item.widthIn, lengthIn: item.lengthIn,
+          typeId: item.typeId || null,
         });
         await load();
       } catch (e) { alert(e?.response?.data?.detail || "Failed to add table"); }
@@ -593,11 +632,18 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
         {/* ─── Palette ──────────────────────────────────────────────────── */}
         {isAdmin && showPalette && (
           <div className="w-48 bg-stone-100 border-r border-stone-300 overflow-y-auto p-2" data-testid="canvas-palette">
-            {PALETTE.map(group => (
+            {palette.map(group => (
               <div key={group.group} className="mb-3">
                 <div className="text-[10px] uppercase tracking-wide text-stone-500 mb-1 px-1 font-semibold">{group.group}</div>
                 <div className="grid grid-cols-2 gap-1">
                   {group.items.map((p, idx) => {
+                    if (p.isPlaceholder) {
+                      return (
+                        <div key={`ph-${idx}`} className="col-span-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2" data-testid="palette-empty-tables">
+                          {p.label}
+                        </div>
+                      );
+                    }
                     const Icon = p.icon;
                     return (
                       <button key={p.paletteKey || `${p.type}-${idx}`} onClick={() => addFromPalette(p)} data-testid={`palette-${p.paletteKey || p.type}`}
@@ -610,7 +656,7 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
                 </div>
               </div>
             ))}
-            <p className="text-[10px] text-stone-500 mt-3 px-1">Click an item to drop it at the center of the view; drag to reposition. Click on an object to edit its dimensions in the right panel.</p>
+            <p className="text-[10px] text-stone-500 mt-3 px-1">Tables come from your <b>Table Inventory</b> — no custom sizes. Click an item to drop it at the center of the view.</p>
           </div>
         )}
         {!showPalette && isAdmin && (
@@ -674,6 +720,7 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
               {tables.map(t => (
                 <TableRenderer key={`t-${t.id}`} t={t} isAdmin={isAdmin} pxPerFt={pxPerFt}
                   isSelected={selection?.kind === "table" && selection.id === t.id}
+                  groupCapacity={t.groupId ? groupCap[t.groupId] : null}
                   onPointerDown={e => onObjectPointerDown(e, "table", t)}
                   onDoubleClick={() => onOpenTable?.(t)}
                   onResizeStart={(e, h) => onResizePointerDown(e, "table", t, h)}
@@ -782,36 +829,51 @@ function DimensionLabels({ w, h, widthFt, heightFt }) {
   );
 }
 
-function TableRenderer({ t, pxPerFt, isAdmin, isSelected, onPointerDown, onDoubleClick, onResizeStart, onRotateStart }) {
+function TableRenderer({ t, pxPerFt, isAdmin, isSelected, onPointerDown, onDoubleClick, onResizeStart, onRotateStart, groupCapacity }) {
   const dims = tablePxDims(t, pxPerFt);
-  const fill = TABLE_COLOR_FILL[t.color] || TABLE_COLOR_FILL.gray;
-  const stroke = TABLE_COLOR_STROKE[t.color] || TABLE_COLOR_STROKE.gray;
+  // Effective capacity = group sum when combined, else table's own.
+  const effCap = groupCapacity || t.maxCapacity || 0;
+  const overflow = (t.seatsTaken || 0) > effCap;
+  const colorKey = overflow ? "red" : (t.color || "gray");
+  const fill = TABLE_COLOR_FILL[colorKey] || TABLE_COLOR_FILL.gray;
+  const stroke = TABLE_COLOR_STROKE[colorKey] || TABLE_COLOR_STROKE.gray;
   const chairs = chairsForTable(t, dims);
   const x = t.canvasX || 0, y = t.canvasY || 0;
   const rot = t.rotation || 0;
   const dimsLabel = dims.isRound
     ? `${Math.round(t.widthIn)}in round`
     : `${formatLen(t.widthIn)} × ${formatLen(t.lengthIn)}`;
+  const groupLabel = t.groupId ? ` · combined` : "";
 
   return (
     <g transform={`translate(${x}, ${y}) rotate(${rot} ${dims.w / 2} ${dims.h / 2})`} data-testid={`canvas-table-${t.id}`} className="cursor-pointer">
       {/* chairs (drawn first so the table sits on top) */}
       {chairs.map((c, i) => (
-        <circle key={`ch-${i}`} cx={c.cx} cy={c.cy} r={c.r} fill="#f5f5f4" stroke="#78716c" strokeWidth="1" pointerEvents="none" />
+        <circle key={`ch-${i}`} cx={c.cx} cy={c.cy} r={c.r}
+          fill={c.occupied ? CHAIR_OCCUPIED_FILL : CHAIR_EMPTY_FILL}
+          stroke={c.occupied ? CHAIR_OCCUPIED_STROKE : CHAIR_EMPTY_STROKE}
+          strokeWidth="1" pointerEvents="none"
+          data-testid={`chair-${t.id}-${i}-${c.occupied ? "green" : "gray"}`} />
       ))}
       {/* table body */}
       <g onPointerDown={onPointerDown} onDoubleClick={onDoubleClick}>
         {dims.isRound ? (
-          <circle cx={dims.w / 2} cy={dims.h / 2} r={dims.radius} fill={fill} stroke={stroke} strokeWidth="2.5" />
+          <circle cx={dims.w / 2} cy={dims.h / 2} r={dims.radius} fill={fill} stroke={stroke}
+            strokeWidth={overflow ? "3.5" : "2.5"}
+            strokeDasharray={t.groupId ? "6 3" : undefined} />
         ) : (
-          <rect width={dims.w} height={dims.h} fill={fill} stroke={stroke} strokeWidth="2.5" rx="4" />
+          <rect width={dims.w} height={dims.h} fill={fill} stroke={stroke}
+            strokeWidth={overflow ? "3.5" : "2.5"} rx="4"
+            strokeDasharray={t.groupId ? "6 3" : undefined} />
         )}
         <text x={dims.w / 2} y={dims.h / 2 - 4} fill="#1c1917" fontSize="14" fontWeight="700" textAnchor="middle" dominantBaseline="middle" className="select-none pointer-events-none">{t.tableNumber}</text>
-        <text x={dims.w / 2} y={dims.h / 2 + 10} fill="#44403c" fontSize="9" textAnchor="middle" dominantBaseline="middle" className="select-none pointer-events-none">{t.seatsTaken}/{t.maxCapacity}</text>
-        <title>{t.label || `Table ${t.tableNumber}`} — {t.seatsTaken}/{t.maxCapacity} · {dimsLabel} · Double-click to open</title>
+        <text x={dims.w / 2} y={dims.h / 2 + 10} fill={overflow ? "#b91c1c" : "#44403c"} fontSize="9" textAnchor="middle" dominantBaseline="middle" className="select-none pointer-events-none">
+          {t.seatsTaken}/{effCap}{overflow ? " ⚠" : ""}
+        </text>
+        <title>{t.label || `Table ${t.tableNumber}`} — {t.seatsTaken}/{effCap} · {dimsLabel}{groupLabel}{overflow ? " · OVER CAPACITY" : ""}</title>
       </g>
       {/* dimension label below table */}
-      <text x={dims.w / 2} y={dims.h + 14} fill="#fde68a" fontSize="10" textAnchor="middle" className="select-none pointer-events-none font-mono">{dimsLabel}</text>
+      <text x={dims.w / 2} y={dims.h + 14} fill="#fde68a" fontSize="10" textAnchor="middle" className="select-none pointer-events-none font-mono">{dimsLabel}{groupLabel}</text>
       {/* selection + handles */}
       {isAdmin && isSelected && (
         <SelectionHandles w={dims.w} h={dims.h} onResizeStart={onResizeStart} onRotateStart={onRotateStart} />

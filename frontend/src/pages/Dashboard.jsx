@@ -2,14 +2,17 @@ import { useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "@/lib/auth";
 import { apiClient } from "@/lib/api";
-import { LogOut, Users, ListChecks, GitMerge, ScrollText, UserCog, Search, X, MessageSquare, Check, AlertCircle, Loader2, LayoutGrid, FileSpreadsheet } from "lucide-react";
+import { LogOut, Users, ListChecks, GitMerge, ScrollText, UserCog, Search, X, MessageSquare, Check, AlertCircle, Loader2, LayoutGrid, FileSpreadsheet, Layers } from "lucide-react";
 import TablesTab from "@/pages/TablesTab";
 import RosterTab from "@/pages/RosterTab";
+import TableInventoryTab from "@/pages/TableInventoryTab";
+import { BulkImportButton, AutoAssignButton } from "@/components/GuestBulkActions";
 
 const TABS = [
   { id: "guests", label: "Guest List", icon: Users },
   { id: "unassigned", label: "Unassigned Queue", icon: ListChecks },
   { id: "tables", label: "Tables & Seating", icon: LayoutGrid },
+  { id: "inventory", label: "Table Inventory", icon: Layers },
   { id: "preferences", label: "Preferences", icon: GitMerge },
   { id: "roster", label: "Roster", icon: FileSpreadsheet },
   { id: "activity", label: "Activity Log", icon: ScrollText },
@@ -113,23 +116,50 @@ function GuestDrawer({ guest, onClose, onUpdated }) {
 
 function GuestList({ openGuest }) {
   const [guests, setGuests] = useState([]);
+  const [tables, setTables] = useState([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [dupOnly, setDupOnly] = useState(false);
   const [hcOnly, setHcOnly] = useState(false);
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
+  const [moveErr, setMoveErr] = useState("");
+
+  const load = () => {
     setLoading(true);
     const params = {};
     if (search) params.search = search;
     if (statusFilter) params.status = statusFilter;
     if (dupOnly) params.isDuplicate = true;
     if (hcOnly) params.highChair = true;
-    apiClient.get("/guests", { params }).then(r => setGuests(r.data)).finally(() => setLoading(false));
-  }, [search, statusFilter, dupOnly, hcOnly]);
+    Promise.all([
+      apiClient.get("/guests", { params }).then(r => setGuests(r.data)),
+      apiClient.get("/tables").then(r => setTables(r.data)),
+    ]).finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [search, statusFilter, dupOnly, hcOnly]);
+
+  const tableNumberFor = (g) => {
+    if (!g.tableId) return null;
+    const t = tables.find(x => x.id === g.tableId);
+    return t ? t.tableNumber : null;
+  };
+
+  const moveFamily = async (guest, newTableId) => {
+    setMoveErr("");
+    try {
+      const target = newTableId === "" ? null : Number(newTableId);
+      await apiClient.post("/guests/family/move", { guestId: guest.id, targetTableId: target });
+      load();
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      setMoveErr(typeof d === "object" ? d.message : (d || "Move failed"));
+    }
+  };
+
   return (
     <div className="p-6" data-testid="guests-tab">
-      <div className="flex flex-wrap gap-3 mb-4">
+      <div className="flex flex-wrap gap-3 mb-4 items-center">
         <div className="relative flex-1 min-w-64">
           <Search className="absolute left-3 top-3 h-4 w-4 text-stone-400" />
           <input data-testid="guest-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or invoice..."
@@ -146,31 +176,60 @@ function GuestList({ openGuest }) {
         <label className="flex items-center gap-2 px-3 py-2 border border-stone-300 rounded cursor-pointer">
           <input data-testid="hc-filter" type="checkbox" checked={hcOnly} onChange={e => setHcOnly(e.target.checked)} /> High chairs
         </label>
+        <BulkImportButton onDone={load} />
+        <AutoAssignButton onDone={load} />
       </div>
+      {moveErr && (
+        <div className="mb-3 bg-red-50 border border-red-200 text-red-700 rounded p-3 text-sm" data-testid="move-error">{moveErr}</div>
+      )}
       <div className="bg-white border border-stone-200 rounded-lg overflow-hidden">
         <table className="w-full text-sm" data-testid="guest-table">
           <thead className="bg-stone-50 border-b border-stone-200"><tr>
             <th className="text-left p-3">Name</th><th className="text-left p-3">Invoice</th>
-            <th className="text-left p-3">Party</th><th className="text-left p-3">Status</th>
+            <th className="text-left p-3">Party</th><th className="text-left p-3">Family</th>
+            <th className="text-left p-3">Table</th>
+            <th className="text-left p-3">Status</th>
             <th className="text-left p-3">Flags</th><th className="text-left p-3">Submitted</th>
           </tr></thead>
           <tbody>
-            {loading && <tr><td colSpan={6} className="p-8 text-center text-stone-500"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>}
-            {!loading && guests.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-stone-500">No guests yet</td></tr>}
-            {guests.map(g => (
-              <tr key={g.id} onClick={() => openGuest(g)} className="border-b border-stone-100 hover:bg-stone-50 cursor-pointer" data-testid={`guest-row-${g.id}`}>
-                <td className="p-3 font-medium text-stone-900">{g.fullName}</td>
-                <td className="p-3 text-stone-700">{g.invoiceNumber}</td>
-                <td className="p-3">{g.partySize}</td>
-                <td className="p-3"><span className="px-2 py-0.5 rounded text-xs bg-stone-100">{g.status}</span></td>
-                <td className="p-3 space-x-1">
-                  {g.isDuplicate && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-xs rounded">DUP</span>}
-                  {g.highChairNeeded && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-xs rounded">HC×{g.highChairCount}</span>}
-                  {g.specialNotes && <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-xs rounded">NOTE</span>}
-                </td>
-                <td className="p-3 text-stone-500 text-xs">{new Date(g.submissionTimestamp).toLocaleString()}</td>
-              </tr>
-            ))}
+            {loading && <tr><td colSpan={8} className="p-8 text-center text-stone-500"><Loader2 className="h-5 w-5 animate-spin inline" /></td></tr>}
+            {!loading && guests.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-stone-500">No guests yet</td></tr>}
+            {guests.map(g => {
+              const num = tableNumberFor(g);
+              return (
+                <tr key={g.id} className="border-b border-stone-100 hover:bg-stone-50" data-testid={`guest-row-${g.id}`}>
+                  <td className="p-3 font-medium text-stone-900 cursor-pointer" onClick={() => openGuest(g)}>{g.fullName}</td>
+                  <td className="p-3 text-stone-700 cursor-pointer" onClick={() => openGuest(g)}>{g.invoiceNumber}</td>
+                  <td className="p-3 cursor-pointer" onClick={() => openGuest(g)}>{g.partySize}</td>
+                  <td className="p-3 text-stone-500 cursor-pointer" onClick={() => openGuest(g)}>{g.familyId || "—"}</td>
+                  <td className="p-3">
+                    <select
+                      data-testid={`guest-table-select-${g.id}`}
+                      value={g.tableId || ""}
+                      onChange={(e) => moveFamily(g, e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="px-2 py-1 border border-stone-300 rounded text-sm bg-white"
+                      title={g.familyId ? `Moves the entire family ${g.familyId}` : "Moves just this guest"}
+                    >
+                      <option value="">— unassigned —</option>
+                      {tables.map(t => (
+                        <option key={t.id} value={t.id}>
+                          #{t.tableNumber} ({t.seatsTaken}/{t.maxCapacity})
+                        </option>
+                      ))}
+                    </select>
+                    {num && <span className="ml-2 text-xs text-stone-500">#{num}</span>}
+                  </td>
+                  <td className="p-3 cursor-pointer" onClick={() => openGuest(g)}><span className="px-2 py-0.5 rounded text-xs bg-stone-100">{g.status}</span></td>
+                  <td className="p-3 space-x-1 cursor-pointer" onClick={() => openGuest(g)}>
+                    {g.isDuplicate && <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-xs rounded">DUP</span>}
+                    {g.highChairNeeded && <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-xs rounded">HC×{g.highChairCount}</span>}
+                    {g.specialNotes && <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-xs rounded">NOTE</span>}
+                  </td>
+                  <td className="p-3 text-stone-500 text-xs cursor-pointer" onClick={() => openGuest(g)}>{new Date(g.submissionTimestamp).toLocaleString()}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -402,6 +461,7 @@ export default function Dashboard() {
       {tab === "guests" && <GuestList openGuest={setSelected} />}
       {tab === "unassigned" && <UnassignedQueue openGuest={setSelected} />}
       {tab === "tables" && <TablesTab isAdmin={user.isAdmin} />}
+      {tab === "inventory" && <TableInventoryTab isAdmin={user.isAdmin} />}
       {tab === "preferences" && <PreferencesTab />}
       {tab === "roster" && <RosterTab isAdmin={user.isAdmin} />}
       {tab === "activity" && <ActivityLog />}

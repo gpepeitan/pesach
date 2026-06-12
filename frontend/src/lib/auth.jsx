@@ -23,13 +23,20 @@ export const AuthProvider = ({ children }) => {
     return data.user;
   };
 
+  const devLogin = async () => {
+    const { data } = await apiClient.post("/auth/dev-login");
+    setToken(data.token);
+    setUser(data.user);
+    return data.user;
+  };
+
   const logout = async () => {
     try { await apiClient.post("/auth/logout"); } catch (e) {}
     setToken(null);
     setUser(null);
   };
 
-  return <AuthCtx.Provider value={{ user, loading, login, logout }}>{children}</AuthCtx.Provider>;
+  return <AuthCtx.Provider value={{ user, loading, login, devLogin, logout }}>{children}</AuthCtx.Provider>;
 };
 
 export const useAuth = () => useContext(AuthCtx);

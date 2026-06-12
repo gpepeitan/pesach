@@ -131,6 +131,9 @@ class GuestUpdateInput(BaseModel):
     highChairCount: Optional[int] = None
     specialNotes: Optional[str] = None
     isDuplicate: Optional[bool] = None
+    familyId: Optional[str] = None
+    nearFamilyId: Optional[str] = None
+    tableId: Optional[int] = None
 
 
 # ---------- serializers ----------
@@ -141,6 +144,8 @@ def guest_to_api(g) -> dict:
         "highChairNeeded": g["high_chair_needed"], "highChairCount": g["high_chair_count"],
         "status": g["status"], "ballroomId": g["ballroom_id"], "tableId": g["table_id"],
         "specialNotes": g["special_notes"], "isDuplicate": g["is_duplicate"],
+        "familyId": g["family_id"] if "family_id" in g.keys() else None,
+        "nearFamilyId": g["near_family_id"] if "near_family_id" in g.keys() else None,
         "submissionTimestamp": g["submission_timestamp"].isoformat(),
         "lastUpdatedTimestamp": g["last_updated_timestamp"].isoformat(),
     }
@@ -542,10 +547,20 @@ async def get_guest(guest_id: int, user: dict = Depends(get_current_user), db: A
 async def update_guest(guest_id: int, body: GuestUpdateInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     sets, params = [], {"id": guest_id}
     mapping = {"fullName": "full_name", "partySize": "party_size", "highChairNeeded": "high_chair_needed",
-               "highChairCount": "high_chair_count", "specialNotes": "special_notes", "isDuplicate": "is_duplicate"}
+               "highChairCount": "high_chair_count", "specialNotes": "special_notes", "isDuplicate": "is_duplicate",
+               "familyId": "family_id", "nearFamilyId": "near_family_id"}
     for k, col in mapping.items():
         v = getattr(body, k)
         if v is not None: sets.append(f"{col}=:{col}"); params[col] = v
+    # tableId handled specially (also updates ballroom_id + status)
+    if body.tableId is not None:
+        if body.tableId == 0:
+            sets.append("table_id=NULL"); sets.append("ballroom_id=NULL"); sets.append("status='unassigned'")
+        else:
+            t = (await db.execute(text("SELECT ballroom_id FROM tables WHERE id=:i"), {"i": body.tableId})).mappings().first()
+            if not t: raise HTTPException(404, "Target table not found")
+            sets.append("table_id=:tid"); sets.append("ballroom_id=:brid"); sets.append("status='fully_assigned'")
+            params["tid"] = body.tableId; params["brid"] = t["ballroom_id"]
     if not sets: raise HTTPException(400, "No fields to update")
     sets.append("last_updated_timestamp=NOW()")
     row = (await db.execute(text(f"UPDATE guests SET {', '.join(sets)} WHERE id=:id RETURNING *"), params)).mappings().first()
@@ -700,6 +715,8 @@ class TableInput(BaseModel):
     widthIn: Optional[float] = None
     lengthIn: Optional[float] = None
     notes: Optional[str] = None
+    typeId: Optional[int] = None
+    groupId: Optional[str] = None
 
 
 class TableUpdateInput(BaseModel):
@@ -714,6 +731,8 @@ class TableUpdateInput(BaseModel):
     widthIn: Optional[float] = None
     lengthIn: Optional[float] = None
     notes: Optional[str] = None
+    typeId: Optional[int] = None
+    groupId: Optional[str] = None
 
 
 class AssignInput(BaseModel):
@@ -758,6 +777,8 @@ def table_to_api(t, seated=0) -> dict:
             "rotation": float(t["rotation"]) if t["rotation"] is not None else 0,
             "widthIn": float(t["width_in"]) if "width_in" in t.keys() and t["width_in"] is not None else 60.0,
             "lengthIn": float(t["length_in"]) if "length_in" in t.keys() and t["length_in"] is not None else 60.0,
+            "typeId": t["type_id"] if "type_id" in t.keys() else None,
+            "groupId": t["group_id"] if "group_id" in t.keys() else None,
             "notes": t["notes"]}
 
 
@@ -967,21 +988,29 @@ async def list_tables(
 
 @api.post("/tables", status_code=201)
 async def create_table(body: TableInput, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    # default dimensions if not provided
-    w_in = body.widthIn if body.widthIn is not None else (60.0 if body.shape == "round" else 96.0)
-    l_in = body.lengthIn if body.lengthIn is not None else (60.0 if body.shape == "round" else 48.0)
-    if body.shape == "square":
-        # square = equal sides
-        l_in = w_in
+    # If typeId provided, hydrate defaults from the table type
+    w_in, l_in, cap, shape = body.widthIn, body.lengthIn, body.maxCapacity, body.shape
+    if body.typeId is not None:
+        tt = (await db.execute(text("SELECT * FROM table_types WHERE id=:i AND is_active=TRUE"),
+                                {"i": body.typeId})).mappings().first()
+        if not tt: raise HTTPException(400, "Invalid or inactive table type")
+        shape = tt["shape"]
+        cap = body.maxCapacity if body.maxCapacity != 10 else int(tt["default_seats"])
+        if w_in is None: w_in = float(tt["width_in"])
+        if l_in is None: l_in = float(tt["length_in"])
+    if w_in is None: w_in = 60.0 if shape == "round" else 96.0
+    if l_in is None: l_in = 60.0 if shape == "round" else 48.0
+    if shape == "square": l_in = w_in
     row = (await db.execute(text("""
         INSERT INTO tables (table_number, label, ballroom_id, shape, max_capacity,
-                            canvas_x, canvas_y, rotation, notes, width_in, length_in)
-        VALUES (:n, :l, :br, :sh, :c, :x, :y, :r, :nt, :wi, :li) RETURNING *
-    """), {"n": body.tableNumber, "l": body.label, "br": body.ballroomId, "sh": body.shape,
-           "c": body.maxCapacity, "x": body.canvasX or 0, "y": body.canvasY or 0,
-           "r": body.rotation or 0, "nt": body.notes, "wi": w_in, "li": l_in})).mappings().first()
+                            canvas_x, canvas_y, rotation, notes, width_in, length_in, type_id, group_id)
+        VALUES (:n, :l, :br, :sh, :c, :x, :y, :r, :nt, :wi, :li, :ti, :gi) RETURNING *
+    """), {"n": body.tableNumber, "l": body.label, "br": body.ballroomId, "sh": shape,
+           "c": cap, "x": body.canvasX or 0, "y": body.canvasY or 0,
+           "r": body.rotation or 0, "nt": body.notes, "wi": w_in, "li": l_in,
+           "ti": body.typeId, "gi": body.groupId})).mappings().first()
     await log_activity(db, user, "table_create", table_id=row["id"], ballroom_id=body.ballroomId,
-                       details={"number": body.tableNumber, "capacity": body.maxCapacity})
+                       details={"number": body.tableNumber, "capacity": cap, "typeId": body.typeId})
     await db.commit()
     return table_to_api(row, 0)
 
@@ -991,7 +1020,8 @@ async def update_table(table_id: int, body: TableUpdateInput, user: dict = Depen
     mapping = {"tableNumber": "table_number", "label": "label", "ballroomId": "ballroom_id",
                "shape": "shape", "maxCapacity": "max_capacity", "canvasX": "canvas_x",
                "canvasY": "canvas_y", "rotation": "rotation", "notes": "notes",
-               "widthIn": "width_in", "lengthIn": "length_in"}
+               "widthIn": "width_in", "lengthIn": "length_in",
+               "typeId": "type_id", "groupId": "group_id"}
     sets, params = [], {"id": table_id}
     for k, col in mapping.items():
         v = getattr(body, k)
@@ -1197,6 +1227,475 @@ async def auto_suggest_apply(plan: List[dict], user: dict = Depends(get_current_
     await log_activity(db, user, "auto_suggest_apply", details={"applied": applied, "total": len(plan)})
     await db.commit()
     return {"applied": applied}
+
+
+# ---------- TABLE TYPES (inventory) ----------
+class TableTypeInput(BaseModel):
+    name: str = Field(min_length=1)
+    shape: str = "round"
+    defaultSeats: int = 10
+    widthIn: float = 60
+    lengthIn: float = 60
+    quantityOwned: int = 0
+    isActive: bool = True
+    notes: Optional[str] = None
+
+
+def tt_to_api(r) -> dict:
+    return {"id": r["id"], "name": r["name"], "shape": r["shape"],
+            "defaultSeats": int(r["default_seats"]),
+            "widthIn": float(r["width_in"]), "lengthIn": float(r["length_in"]),
+            "quantityOwned": int(r["quantity_owned"]), "isActive": bool(r["is_active"]),
+            "notes": r["notes"], "createdAt": r["created_at"].isoformat()}
+
+
+@api.get("/table-types")
+async def list_table_types(user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(text("SELECT * FROM table_types ORDER BY name"))).mappings().all()
+    return [tt_to_api(r) for r in rows]
+
+
+@api.post("/table-types", status_code=201)
+async def create_table_type(body: TableTypeInput, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    shape = body.shape
+    w_in = body.widthIn; l_in = body.lengthIn if shape != "square" else body.widthIn
+    row = (await db.execute(text("""
+        INSERT INTO table_types (name, shape, default_seats, width_in, length_in, quantity_owned, is_active, notes)
+        VALUES (:n, :s, :ds, :w, :l, :q, :a, :nt) RETURNING *
+    """), {"n": body.name, "s": shape, "ds": body.defaultSeats, "w": w_in, "l": l_in,
+           "q": body.quantityOwned, "a": body.isActive, "nt": body.notes})).mappings().first()
+    await log_activity(db, user, "table_type_create", details={"id": row["id"], "name": body.name})
+    await db.commit()
+    return tt_to_api(row)
+
+
+@api.patch("/table-types/{tt_id}")
+async def update_table_type(tt_id: int, body: TableTypeInput, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    shape = body.shape
+    w_in = body.widthIn; l_in = body.lengthIn if shape != "square" else body.widthIn
+    row = (await db.execute(text("""
+        UPDATE table_types SET name=:n, shape=:s, default_seats=:ds, width_in=:w, length_in=:l,
+            quantity_owned=:q, is_active=:a, notes=:nt
+        WHERE id=:i RETURNING *
+    """), {"i": tt_id, "n": body.name, "s": shape, "ds": body.defaultSeats, "w": w_in, "l": l_in,
+           "q": body.quantityOwned, "a": body.isActive, "nt": body.notes})).mappings().first()
+    if not row: raise HTTPException(404, "Table type not found")
+    await log_activity(db, user, "table_type_update", details={"id": tt_id})
+    await db.commit()
+    return tt_to_api(row)
+
+
+@api.delete("/table-types/{tt_id}", status_code=204)
+async def delete_table_type(tt_id: int, user: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    in_use = (await db.execute(text("SELECT COUNT(*) FROM tables WHERE type_id=:i"), {"i": tt_id})).scalar()
+    if in_use:
+        raise HTTPException(400, f"Type is in use by {in_use} tables; deactivate instead")
+    await db.execute(text("DELETE FROM table_types WHERE id=:i"), {"i": tt_id})
+    await log_activity(db, user, "table_type_delete", details={"id": tt_id})
+    await db.commit()
+
+
+# ---------- BULK GUEST IMPORT (CSV / Excel / QuickBooks export) ----------
+@app.post("/api/guests/bulk-import")
+async def guests_bulk_import(
+    request: Request,
+    user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db),
+):
+    """Accepts:
+      - multipart upload with field 'file' (CSV, .xlsx, or .xls)
+      - raw CSV text body when content-type is text/csv
+    Columns (header row required, case-insensitive). Required: full_name (or name) AND
+      either invoice_number (or invoice) OR a family_id.
+    Optional columns: party_size (or guests), family_id, near_family_id,
+      seating_preferences (semicolon-separated), high_chair_count, special_notes,
+      email, phone.
+    Auto-fills invoice from family_id (e.g. 'FAM-001-1') if missing.
+    Upserts by invoice_number — existing rows updated, new rows inserted.
+    """
+    import csv as _csv, io
+    ctype = (request.headers.get("content-type") or "").lower()
+    rows_raw: List[dict] = []
+
+    if "multipart" in ctype:
+        form = await request.form()
+        f = form.get("file")
+        if f is None:
+            raise HTTPException(400, "Missing 'file' field")
+        fname = (getattr(f, "filename", "") or "").lower()
+        data = await f.read()
+        if fname.endswith((".xlsx", ".xls")):
+            try:
+                from openpyxl import load_workbook
+            except Exception:
+                raise HTTPException(500, "openpyxl not installed on server")
+            wb = load_workbook(io.BytesIO(data), data_only=True)
+            ws = wb.active
+            it = ws.iter_rows(values_only=True)
+            headers = [str(h).strip() if h is not None else "" for h in next(it, [])]
+            for r in it:
+                row = {headers[i]: (str(r[i]).strip() if r[i] is not None else "") for i in range(min(len(headers), len(r)))}
+                if any(v for v in row.values()): rows_raw.append(row)
+        else:
+            content = data.decode("utf-8-sig", errors="replace")
+            reader = _csv.DictReader(io.StringIO(content))
+            for row in reader: rows_raw.append({k: (v or "").strip() for k, v in row.items()})
+    else:
+        content = (await request.body()).decode("utf-8-sig", errors="replace")
+        if not content.strip(): raise HTTPException(400, "Empty body")
+        reader = _csv.DictReader(io.StringIO(content))
+        for row in reader: rows_raw.append({k: (v or "").strip() for k, v in row.items()})
+
+    if not rows_raw:
+        return {"inserted": 0, "updated": 0, "skipped": 0, "errors": ["No data rows found"]}
+
+    norm = lambda s: (s or "").strip().lower().replace(" ", "_")
+    sample_keys = {norm(k) for k in rows_raw[0].keys()}
+    aliases = {
+        "full_name": ["full_name", "name", "guest_name", "customer", "customer_name"],
+        "invoice_number": ["invoice_number", "invoice", "invoiceno", "invoice#", "invoice_no", "invoice_num"],
+        "party_size": ["party_size", "party", "guests", "guest_count", "headcount", "people"],
+        "family_id": ["family_id", "family", "familyid"],
+        "near_family_id": ["near_family_id", "near_family", "adjacent_family", "seat_near"],
+        "preferences": ["seating_preferences", "preferences", "prefers"],
+        "high_chair_count": ["high_chair_count", "high_chairs", "highchair"],
+        "special_notes": ["special_notes", "notes", "note"],
+    }
+    def pick(row, key):
+        for a in aliases[key]:
+            for k, v in row.items():
+                if norm(k) == a and (v or "").strip(): return v
+        return None
+
+    inserted = updated = skipped = 0
+    errors: List[str] = []
+    for i, row in enumerate(rows_raw, start=2):
+        nm = (pick(row, "full_name") or "").strip()
+        inv = (pick(row, "invoice_number") or "").strip()
+        fam = (pick(row, "family_id") or "").strip() or None
+        if not nm:
+            skipped += 1; errors.append(f"Row {i}: missing name"); continue
+        if not inv:
+            # synthesize from family_id+row, or hash of name
+            if fam:
+                inv = f"{fam}-r{i}"
+            else:
+                inv = f"BULK-{nm.upper().replace(' ', '')[:12]}-r{i}"
+        try:
+            ps = int(pick(row, "party_size") or "1")
+        except Exception:
+            ps = 1
+        try:
+            hcc = int(pick(row, "high_chair_count") or "0")
+        except Exception:
+            hcc = 0
+        near = (pick(row, "near_family_id") or "").strip() or None
+        notes = pick(row, "special_notes")
+        prefs_raw = pick(row, "preferences") or ""
+        prefs = [p.strip() for p in prefs_raw.replace(",", ";").split(";") if p.strip()][:5]
+
+        try:
+            existing = (await db.execute(text("SELECT id FROM guests WHERE invoice_number=:i"),
+                                          {"i": inv})).mappings().first()
+            if existing:
+                await db.execute(text("""
+                    UPDATE guests SET full_name=:n, party_size=:ps, family_id=COALESCE(:fam, family_id),
+                        near_family_id=COALESCE(:near, near_family_id),
+                        seating_preferences=:prefs, high_chair_count=:hcc, high_chair_needed=:hcn,
+                        special_notes=COALESCE(:nt, special_notes), last_updated_timestamp=NOW()
+                    WHERE invoice_number=:i
+                """), {"n": nm, "ps": ps, "fam": fam, "near": near, "prefs": prefs,
+                       "hcc": hcc, "hcn": hcc > 0, "nt": notes, "i": inv})
+                updated += 1
+            else:
+                await db.execute(text("""
+                    INSERT INTO guests (full_name, invoice_number, party_size, seating_preferences,
+                        high_chair_needed, high_chair_count, special_notes, family_id, near_family_id, is_duplicate)
+                    VALUES (:n, :i, :ps, :prefs, :hcn, :hcc, :nt, :fam, :near, FALSE)
+                """), {"n": nm, "i": inv, "ps": ps, "prefs": prefs,
+                       "hcn": hcc > 0, "hcc": hcc, "nt": notes, "fam": fam, "near": near})
+                inserted += 1
+        except Exception as ex:
+            skipped += 1; errors.append(f"Row {i}: {str(ex)[:140]}")
+
+    await log_activity(db, user, "guests_bulk_import",
+                       details={"inserted": inserted, "updated": updated, "skipped": skipped})
+    await db.commit()
+    return {"inserted": inserted, "updated": updated, "skipped": skipped, "errors": errors[:30]}
+
+
+# ---------- AUTOMATED SEATING ENGINE (family-grouped, combine-when-big) ----------
+class AutoAssignBody(BaseModel):
+    ballroomId: Optional[int] = None
+    apply: bool = False  # if true, persist; otherwise return plan only
+    allowCombine: bool = True  # combine multiple tables when a family > capacity
+
+
+@api.post("/seating/auto-assign")
+async def auto_assign(body: AutoAssignBody, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Group unassigned guests by family_id (singletons treated as a 1-family).
+    For each family:
+      - Try to find a single open table that fits the entire family. Prefer tables already
+        seating near_family_id guests (adjacency boost).
+      - If no single table fits AND allowCombine: link consecutive empty tables under a
+        new group_id so the family is split across the minimum needed combined tables.
+      - Fill tables to capacity (so few gray chairs).
+    Returns a plan; persists when body.apply == true.
+    """
+    import uuid as _uuid
+
+    where_t = "WHERE t.ballroom_id=:b" if body.ballroomId else ""
+    params: dict = {}
+    if body.ballroomId: params["b"] = body.ballroomId
+
+    rows = (await db.execute(text(f"""
+        SELECT t.*, COALESCE(SUM(g.party_size),0) AS seated
+        FROM tables t LEFT JOIN guests g ON g.table_id = t.id
+        {where_t}
+        GROUP BY t.id ORDER BY t.table_number ASC
+    """), params)).mappings().all()
+    if not rows:
+        raise HTTPException(400, "No tables — create or place tables on the canvas first")
+    tables = [{
+        "id": r["id"], "number": r["table_number"], "ballroom_id": r["ballroom_id"],
+        "cap": int(r["max_capacity"]), "seated": int(r["seated"]),
+        "x": float(r["canvas_x"] or 0), "y": float(r["canvas_y"] or 0),
+        "group_id": r["group_id"] if "group_id" in r.keys() else None,
+        "family_assigned": set(),  # family_ids on this table
+    } for r in rows]
+
+    g_where = "WHERE status='unassigned'"
+    g_params: dict = {}
+    if body.ballroomId:
+        # only consider guests not already in another ballroom
+        g_where += " AND (ballroom_id IS NULL OR ballroom_id = :br)"
+        g_params["br"] = body.ballroomId
+    guests = (await db.execute(text(
+        f"SELECT id, full_name, party_size, family_id, near_family_id FROM guests {g_where}"
+    ), g_params)).mappings().all()
+
+    if not guests:
+        return {"plan": [], "summary": "No unassigned guests", "applied": 0}
+
+    # Already-assigned guests give us "family_assigned" anchors for adjacency
+    anchored = (await db.execute(text("""
+        SELECT table_id, family_id FROM guests
+        WHERE table_id IS NOT NULL AND family_id IS NOT NULL
+    """))).mappings().all()
+    by_tid = {t["id"]: t for t in tables}
+    for a in anchored:
+        if a["table_id"] in by_tid and a["family_id"]:
+            by_tid[a["table_id"]]["family_assigned"].add(a["family_id"])
+
+    # Group unassigned by family_id (None → singleton synthetic family)
+    families: dict = {}
+    for g in guests:
+        fid = g["family_id"] or f"__solo_{g['id']}"
+        families.setdefault(fid, {
+            "fid": fid, "near": g["near_family_id"],
+            "members": [], "total": 0,
+        })
+        families[fid]["members"].append(dict(g))
+        families[fid]["total"] += g["party_size"]
+
+    # Sort families by descending total — bigger families need room first
+    family_list = sorted(families.values(), key=lambda f: -f["total"])
+
+    plan: List[dict] = []
+
+    def score_table(t, family):
+        """Higher = better. Free seats must >= 1 to be usable here for a partial fit."""
+        free = t["cap"] - t["seated"]
+        if free <= 0: return -1
+        bonus = 0
+        # adjacency boost
+        if family["near"] and family["near"] in t["family_assigned"]:
+            bonus += 1000
+        # fill-to-capacity preference (smallest free that still fits)
+        return bonus + (100 - free)  # smaller free = higher score
+
+    for fam in family_list:
+        remaining = fam["total"]
+        # 1) find single table that fits everyone (skip tables already locked into a combined group)
+        candidates = [t for t in tables
+                      if (t["cap"] - t["seated"]) >= remaining
+                      and not t.get("group_id")]
+        candidates.sort(key=lambda t: -score_table(t, fam))
+        if candidates:
+            slot = candidates[0]
+            for m in fam["members"]:
+                plan.append({
+                    "guestId": m["id"], "tableId": slot["id"],
+                    "ballroomId": slot["ballroom_id"], "tableNumber": slot["number"],
+                    "guestName": m["full_name"], "partySize": m["party_size"],
+                    "familyId": fam["fid"] if not fam["fid"].startswith("__solo_") else None,
+                    "groupId": slot["group_id"],
+                    "reason": "fits_single_table",
+                })
+                slot["seated"] += m["party_size"]
+            if not fam["fid"].startswith("__solo_"):
+                slot["family_assigned"].add(fam["fid"])
+            continue
+
+        # 2) combine tables (multi-table group) if allowed
+        if body.allowCombine:
+            # rank tables by adjacency + free-seats descending — only ungrouped tables
+            sortable = sorted(
+                [t for t in tables
+                 if (t["cap"] - t["seated"]) > 0 and not t.get("group_id")],
+                key=lambda t: (
+                    -(1 if (fam["near"] and fam["near"] in t["family_assigned"]) else 0),
+                    -(t["cap"] - t["seated"]),
+                ),
+            )
+            picked = []
+            cum = 0
+            for t in sortable:
+                picked.append(t)
+                cum += t["cap"] - t["seated"]
+                if cum >= remaining: break
+            if cum >= remaining and picked:
+                gid = f"grp-{_uuid.uuid4().hex[:8]}"
+                # Anchor = first picked table. Seat ALL members at the anchor (even if anchor
+                # cap is exceeded) but link the other tables under the same group_id so the
+                # UI shows them combined and accumulates the capacity.
+                anchor = picked[0]
+                for m in fam["members"]:
+                    plan.append({
+                        "guestId": m["id"], "tableId": anchor["id"],
+                        "ballroomId": anchor["ballroom_id"], "tableNumber": anchor["number"],
+                        "guestName": m["full_name"], "partySize": m["party_size"],
+                        "familyId": fam["fid"] if not fam["fid"].startswith("__solo_") else None,
+                        "groupId": gid,
+                        "reason": "combined_tables",
+                    })
+                    anchor["seated"] += m["party_size"]
+                for t in picked:
+                    if not fam["fid"].startswith("__solo_"):
+                        t["family_assigned"].add(fam["fid"])
+                    t["group_id"] = gid
+                continue
+
+        # 3) cannot seat — leave unassigned, report
+        plan.append({
+            "guestId": None, "tableId": None,
+            "guestName": ", ".join(m["full_name"] for m in fam["members"]),
+            "partySize": fam["total"],
+            "familyId": fam["fid"] if not fam["fid"].startswith("__solo_") else None,
+            "reason": "no_capacity",
+        })
+
+    applied = 0
+    if body.apply:
+        # 1) write group_ids first (so tables show as combined even before guests move)
+        gid_to_tables: dict = {}
+        for t in tables:
+            if t.get("group_id"):
+                gid_to_tables.setdefault(t["group_id"], []).append(t["id"])
+        for gid, ids in gid_to_tables.items():
+            await db.execute(text("UPDATE tables SET group_id=:g WHERE id = ANY(:ids)"),
+                             {"g": gid, "ids": ids})
+        # 2) write guest assignments
+        for item in plan:
+            if not item.get("guestId") or not item.get("tableId"): continue
+            await db.execute(text("""
+                UPDATE guests SET table_id=:t, ballroom_id=:b, status='fully_assigned',
+                    last_updated_timestamp=NOW() WHERE id=:g
+            """), {"t": item["tableId"], "b": item["ballroomId"], "g": item["guestId"]})
+            await db.execute(text("DELETE FROM seat_assignments WHERE guest_id=:g"),
+                             {"g": item["guestId"]})
+            await db.execute(text("""
+                INSERT INTO seat_assignments (guest_id, table_id, assigned_by_session)
+                VALUES (:g, :t, :s)
+            """), {"g": item["guestId"], "t": item["tableId"], "s": user["display_name"]})
+            applied += 1
+        await log_activity(db, user, "auto_assign", details={"applied": applied, "total": len(plan)})
+        await db.commit()
+
+    unseated = sum(1 for p in plan if p["reason"] == "no_capacity")
+    return {
+        "plan": plan,
+        "summary": f"{applied if body.apply else 0} guests seated · {unseated} family group(s) couldn't fit",
+        "applied": applied,
+        "unseatedFamilies": unseated,
+    }
+
+
+# ---------- FAMILY-MOVE (whole-family reassignment from guest list) ----------
+class FamilyMoveBody(BaseModel):
+    guestId: int                  # any guest in the family
+    targetTableId: Optional[int]  # null = unassign
+
+
+@api.post("/guests/family/move")
+async def move_family(body: FamilyMoveBody, user: dict = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    g = (await db.execute(text("SELECT id, family_id FROM guests WHERE id=:i"),
+                           {"i": body.guestId})).mappings().first()
+    if not g: raise HTTPException(404, "Guest not found")
+    fid = g["family_id"]
+    if fid:
+        members = (await db.execute(text("SELECT id, party_size FROM guests WHERE family_id=:f"),
+                                     {"f": fid})).mappings().all()
+    else:
+        members = [g]
+        members = (await db.execute(text("SELECT id, party_size FROM guests WHERE id=:i"),
+                                     {"i": body.guestId})).mappings().all()
+
+    if body.targetTableId:
+        t = (await db.execute(text("SELECT ballroom_id, max_capacity FROM tables WHERE id=:i"),
+                               {"i": body.targetTableId})).mappings().first()
+        if not t: raise HTTPException(404, "Target table not found")
+        # current seated AT TARGET (excluding family members we're moving in)
+        member_ids = [m["id"] for m in members]
+        cur = (await db.execute(text("""
+            SELECT COALESCE(SUM(party_size),0) FROM guests
+            WHERE table_id=:t AND id <> ALL(:ids)
+        """), {"t": body.targetTableId, "ids": member_ids})).scalar() or 0
+        need = sum(m["party_size"] for m in members)
+        if cur + need > t["max_capacity"]:
+            raise HTTPException(409, {
+                "error": "capacity_exceeded",
+                "message": f"Family of {need} won't fit (table has {t['max_capacity']-cur} seats free)",
+                "capacity": t["max_capacity"], "free": t["max_capacity"]-cur, "needed": need,
+            })
+        await db.execute(text("""
+            UPDATE guests SET table_id=:t, ballroom_id=:b, status='fully_assigned',
+                last_updated_timestamp=NOW()
+            WHERE id = ANY(:ids)
+        """), {"t": body.targetTableId, "b": t["ballroom_id"], "ids": member_ids})
+    else:
+        member_ids = [m["id"] for m in members]
+        await db.execute(text("""
+            UPDATE guests SET table_id=NULL, ballroom_id=NULL, status='unassigned',
+                last_updated_timestamp=NOW()
+            WHERE id = ANY(:ids)
+        """), {"ids": member_ids})
+
+    await log_activity(db, user, "family_move", guest_id=body.guestId,
+                       table_id=body.targetTableId,
+                       details={"familyId": fid, "memberCount": len(members)})
+    await db.commit()
+    return {"ok": True, "movedCount": len(members), "familyId": fid}
+
+
+# ---------- DEV / SKIP-LOGIN ----------
+@api.post("/auth/dev-login")
+async def dev_login(db: AsyncSession = Depends(get_db)):
+    """Test-only skip-login. Disabled unless DEV_AUTH_BYPASS=1 in backend/.env.
+    Returns a real JWT for the admin user — no password required.
+    """
+    if os.environ.get("DEV_AUTH_BYPASS") != "1":
+        raise HTTPException(403, "Dev login is disabled in this environment")
+    row = (await db.execute(text(
+        "SELECT * FROM staff_users WHERE is_admin=TRUE AND is_active=TRUE ORDER BY id LIMIT 1"
+    ))).mappings().first()
+    if not row: raise HTTPException(500, "No admin user available")
+    await db.execute(text("UPDATE staff_users SET last_login=NOW() WHERE id=:i"), {"i": row["id"]})
+    await log_activity(db, dict(row), "dev_login")
+    await db.commit()
+    token = make_token(row["id"], row["username"], row["is_admin"])
+    return {"token": token, "user": {"id": row["id"], "username": row["username"],
+            "displayName": row["display_name"], "isAdmin": row["is_admin"]},
+            "devBypass": True}
 
 
 # ---------- ACTIVITY LOG ----------

@@ -181,6 +181,26 @@ ALTER TABLE guests ADD COLUMN IF NOT EXISTS family_id TEXT;
 ALTER TABLE guests ADD COLUMN IF NOT EXISTS near_family_id TEXT;
 CREATE INDEX IF NOT EXISTS idx_guests_family_id ON guests(family_id);
 CREATE INDEX IF NOT EXISTS idx_guests_near_family_id ON guests(near_family_id);
+
+-- Phase 4.6 (table inventory): pre-defined table types staff configures, canvas pulls from these
+CREATE TABLE IF NOT EXISTS table_types (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,                 -- e.g. "60-inch round", "8ft rectangle"
+  shape TEXT NOT NULL DEFAULT 'round',-- round | rectangular | square
+  default_seats INTEGER NOT NULL DEFAULT 10,
+  width_in NUMERIC(8,2) NOT NULL DEFAULT 60,
+  length_in NUMERIC(8,2) NOT NULL DEFAULT 60,
+  quantity_owned INTEGER NOT NULL DEFAULT 0,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE tables ADD COLUMN IF NOT EXISTS type_id INTEGER REFERENCES table_types(id) ON DELETE SET NULL;
+
+-- Phase 4.7 (combined tables): when a family > capacity, multiple tables linked as one logical group
+ALTER TABLE tables ADD COLUMN IF NOT EXISTS group_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_tables_group_id ON tables(group_id);
 """
 
 
