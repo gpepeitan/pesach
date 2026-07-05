@@ -116,13 +116,14 @@
 
 ### Drag & UX hardening
 - [x] Sticky drag bug — window-level pointermove/up/cancel + blur/visibility/Escape resets
-- [x] Palette → cursor-drop (HTML5 drag-and-drop); click-to-center kept as fallback
+- [x] Palette → cursor-drop (HTML5 drag-and-drop); click-to-center placement removed
 - [x] Pan from any empty area (no spacebar required)
 - [x] Ctrl/Cmd+click multi-select; sky-blue dashed halo
+- [x] Multi-selected objects move/rotate together and persist each changed item
 - [x] Delete/Backspace key + toolbar trash button removes selection
 - [x] Undo / redo persisted per staff (DB-backed action_history)
 - [x] Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z bound globally + in canvas
-- [ ] Smart Figma-style alignment guides (deferred to Phase 6 backlog)
+- [x] Smart Figma-style alignment guides for drag/resize edge and midpoint snapping
 
 ### Canvas objects & tools
 - [x] Divider line tool (palette-line) — draggable, resizable, rotatable
@@ -158,7 +159,6 @@
 ---
 
 ## Phase 6 Backlog (not built yet)
-- [ ] Smart alignment guides (Figma / Google Slides style snap lines)
 - [ ] Printable per-table centerpiece cards
 - [ ] Year-to-year archive + reset tool
 - [ ] WebSocket live collaborative editing with soft locks

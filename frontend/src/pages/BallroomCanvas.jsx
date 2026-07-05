@@ -99,6 +99,67 @@ function snapVal(v, gridPx, on) {
   return Math.round(v / gridPx) * gridPx;
 }
 
+const GUIDE_THRESHOLD_PX = 6;
+
+function guidePointsForBounds(b) {
+  return {
+    x: [
+      { key: "left", value: b.x },
+      { key: "center", value: b.x + b.w / 2 },
+      { key: "right", value: b.x + b.w },
+    ],
+    y: [
+      { key: "top", value: b.y },
+      { key: "middle", value: b.y + b.h / 2 },
+      { key: "bottom", value: b.y + b.h },
+    ],
+  };
+}
+
+function boundsUnion(bounds) {
+  if (!bounds.length) return null;
+  const minX = Math.min(...bounds.map(b => b.x));
+  const minY = Math.min(...bounds.map(b => b.y));
+  const maxX = Math.max(...bounds.map(b => b.x + b.w));
+  const maxY = Math.max(...bounds.map(b => b.y + b.h));
+  return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+}
+
+function computeAlignment(activeBounds, targetBounds, canvasW, canvasH) {
+  const targets = [
+    { x: 0, y: 0, w: canvasW, h: canvasH },
+    ...targetBounds,
+  ];
+  const active = guidePointsForBounds(activeBounds);
+  let bestX = null;
+  let bestY = null;
+
+  for (const target of targets) {
+    const tp = guidePointsForBounds(target);
+    for (const a of active.x) {
+      for (const t of tp.x) {
+        const delta = t.value - a.value;
+        if (Math.abs(delta) <= GUIDE_THRESHOLD_PX && (!bestX || Math.abs(delta) < Math.abs(bestX.delta))) {
+          bestX = { delta, value: t.value };
+        }
+      }
+    }
+    for (const a of active.y) {
+      for (const t of tp.y) {
+        const delta = t.value - a.value;
+        if (Math.abs(delta) <= GUIDE_THRESHOLD_PX && (!bestY || Math.abs(delta) < Math.abs(bestY.delta))) {
+          bestY = { delta, value: t.value };
+        }
+      }
+    }
+  }
+
+  const guides = [];
+  if (bestX) guides.push({ axis: "x", value: bestX.value });
+  if (bestY) guides.push({ axis: "y", value: bestY.value });
+  return { dx: bestX?.delta || 0, dy: bestY?.delta || 0, guides };
+}
+
 // True when the event target is a form input — avoid hijacking the space key.
 function isTypingTarget(el) {
   if (!el) return false;
@@ -184,6 +245,7 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   const [resize,  setResize]  = useState(null); // {kind, id, handle:'br'|'tr'|'bl'|'tl', startW, startH, startX, startY, sx, sy}
   const [rotate,  setRotate]  = useState(null); // {kind, id, cx, cy, startAngle, baseRotation, freeMode}
   const [panning, setPanning] = useState(null);
+  const [alignmentGuides, setAlignmentGuides] = useState([]);
   const [zoom, setZoom] = useState(1);
   const [pan,  setPan]  = useState({ x: 30, y: 30 });
 
@@ -208,6 +270,27 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   const snapOn    = ballroom?.snapEnabled !== false;
   const canvasW   = (ballroom?.widthFt  || 80) * pxPerFt;
   const canvasH   = (ballroom?.heightFt || 60) * pxPerFt;
+
+  const getBounds = useCallback((kind, item) => {
+    if (!item) return null;
+    if (kind === "table") {
+      const dims = tablePxDims(item, pxPerFt);
+      return { x: item.canvasX || 0, y: item.canvasY || 0, w: dims.w, h: dims.h };
+    }
+    return { x: item.x || 0, y: item.y || 0, w: item.width || 0, h: item.height || 0 };
+  }, [pxPerFt]);
+
+  const allItemBounds = useMemo(() => [
+    ...tables.map(t => ({ kind: "table", id: t.id, bounds: getBounds("table", t) })),
+    ...objects.map(o => ({ kind: "object", id: o.id, bounds: getBounds("object", o) })),
+  ], [tables, objects, getBounds]);
+
+  const alignmentTargets = useCallback((exclude = []) => {
+    const skipped = new Set(exclude.map(s => `${s.kind}:${s.id}`));
+    return allItemBounds
+      .filter(x => x.bounds && !skipped.has(`${x.kind}:${x.id}`))
+      .map(x => x.bounds);
+  }, [allItemBounds]);
 
   // group capacity map: sum capacities for tables sharing a group_id (combined tables)
   const groupCap = useMemo(() => {
@@ -290,12 +373,26 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
       setSelection({ kind, id: item.id });
       return;
     }
-    setSelectionSet([]);
+    const isInMultiSelection = selectionSet.length > 1 && selectionSet.some(s => s.kind === kind && s.id === item.id);
+    if (!isInMultiSelection) setSelectionSet([]);
     setSelection({ kind, id: item.id });
     const { x, y } = screenToCanvas(e.clientX, e.clientY);
     const ix = item.canvasX ?? item.x ?? 0;
     const iy = item.canvasY ?? item.y ?? 0;
-    setDrag({ kind, id: item.id, dx: x - ix, dy: y - iy, current: { x: ix, y: iy } });
+    const dragItems = isInMultiSelection
+      ? selectionSet.map(s => {
+          const source = s.kind === "table" ? tables.find(t => t.id === s.id) : objects.find(o => o.id === s.id);
+          return source ? { ...s, startX: source.canvasX ?? source.x ?? 0, startY: source.canvasY ?? source.y ?? 0 } : null;
+        }).filter(Boolean)
+      : [{ kind, id: item.id, startX: ix, startY: iy }];
+    const activeBounds = boundsUnion(dragItems.map(s => {
+      const source = s.kind === "table" ? tables.find(t => t.id === s.id) : objects.find(o => o.id === s.id);
+      return getBounds(s.kind, source);
+    }).filter(Boolean));
+    setDrag({
+      kind, id: item.id, dx: x - ix, dy: y - iy, current: { x: ix, y: iy },
+      items: dragItems, activeBounds,
+    });
   };
 
   // Space-bar held = "hand tool" — drag anywhere to pan, even over objects.
@@ -433,12 +530,23 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   const onRotatePointerDown = (e, kind, item) => {
     if (!isAdmin) return;
     e.stopPropagation();
+    const isInMultiSelection = selectionSet.length > 1 && selectionSet.some(s => s.kind === kind && s.id === item.id);
+    const rotateItems = isInMultiSelection
+      ? selectionSet.map(s => {
+          const source = s.kind === "table" ? tables.find(t => t.id === s.id) : objects.find(o => o.id === s.id);
+          return source ? { ...s, startRotation: source.rotation || 0 } : null;
+        }).filter(Boolean)
+      : [{ kind, id: item.id, startRotation: item.rotation || 0 }];
+    const activeBounds = boundsUnion(rotateItems.map(s => {
+      const source = s.kind === "table" ? tables.find(t => t.id === s.id) : objects.find(o => o.id === s.id);
+      return getBounds(s.kind, source);
+    }).filter(Boolean));
     const dims = kind === "table" ? tablePxDims(item, pxPerFt) : { w: item.width, h: item.height };
-    const cx = (item.canvasX ?? item.x ?? 0) + dims.w / 2;
-    const cy = (item.canvasY ?? item.y ?? 0) + dims.h / 2;
+    const cx = isInMultiSelection && activeBounds ? activeBounds.x + activeBounds.w / 2 : (item.canvasX ?? item.x ?? 0) + dims.w / 2;
+    const cy = isInMultiSelection && activeBounds ? activeBounds.y + activeBounds.h / 2 : (item.canvasY ?? item.y ?? 0) + dims.h / 2;
     const p = screenToCanvas(e.clientX, e.clientY);
     const startAngle = Math.atan2(p.y - cy, p.x - cx) * 180 / Math.PI;
-    setRotate({ kind, id: item.id, cx, cy, startAngle, baseRotation: item.rotation || 0, freeMode: e.shiftKey });
+    setRotate({ kind, id: item.id, cx, cy, startAngle, baseRotation: item.rotation || 0, freeMode: e.shiftKey, items: rotateItems });
   };
 
   // ── Global pointer move/up: ensures drag stops even outside canvas (fix for "ghost drag" bug)
@@ -448,12 +556,33 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     const onMove = (e) => {
       if (drag) {
         const { x, y } = screenToCanvas(e.clientX, e.clientY);
-        const nx = snapVal(x - drag.dx, gridPx, snapOn);
-        const ny = snapVal(y - drag.dy, gridPx, snapOn);
-        if (drag.kind === "table") {
-          setTables(ts => ts.map(t => t.id === drag.id ? { ...t, canvasX: nx, canvasY: ny } : t));
+        let nx = snapVal(x - drag.dx, gridPx, snapOn);
+        let ny = snapVal(y - drag.dy, gridPx, snapOn);
+        let groupDx = nx - drag.items[0].startX;
+        let groupDy = ny - drag.items[0].startY;
+        if (snapOn && drag.activeBounds) {
+          const movedBounds = { ...drag.activeBounds, x: drag.activeBounds.x + groupDx, y: drag.activeBounds.y + groupDy };
+          const snap = computeAlignment(movedBounds, alignmentTargets(drag.items), canvasW, canvasH);
+          groupDx += snap.dx;
+          groupDy += snap.dy;
+          nx += snap.dx;
+          ny += snap.dy;
+          setAlignmentGuides(snap.guides);
         } else {
-          setObjects(os => os.map(o => o.id === drag.id ? { ...o, x: nx, y: ny } : o));
+          setAlignmentGuides([]);
+        }
+        const tableMoves = new Map();
+        const objectMoves = new Map();
+        for (const s of drag.items) {
+          const next = { x: s.startX + groupDx, y: s.startY + groupDy };
+          if (s.kind === "table") tableMoves.set(s.id, next);
+          else objectMoves.set(s.id, next);
+        }
+        if (tableMoves.size) {
+          setTables(ts => ts.map(t => tableMoves.has(t.id) ? { ...t, canvasX: tableMoves.get(t.id).x, canvasY: tableMoves.get(t.id).y } : t));
+        }
+        if (objectMoves.size) {
+          setObjects(os => os.map(o => objectMoves.has(o.id) ? { ...o, x: objectMoves.get(o.id).x, y: objectMoves.get(o.id).y } : o));
         }
         setDrag(d => ({ ...d, current: { x: nx, y: ny } }));
       } else if (resize) {
@@ -470,6 +599,25 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
         if (resize.shape === "round" || resize.shape === "square") {
           const side = Math.max(nW, nH);
           nW = nH = side;
+        }
+        if (snapOn) {
+          const snap = computeAlignment(
+            { x: nX, y: nY, w: nW, h: nH },
+            alignmentTargets([{ kind: resize.kind, id: resize.id }]),
+            canvasW,
+            canvasH
+          );
+          if (resize.handle.includes("l")) { nX += snap.dx; nW -= snap.dx; }
+          else if (resize.handle.includes("r")) nW += snap.dx;
+          else nX += snap.dx;
+          if (resize.handle.includes("t")) { nY += snap.dy; nH -= snap.dy; }
+          else if (resize.handle.includes("b")) nH += snap.dy;
+          else nY += snap.dy;
+          nW = Math.max(15, nW);
+          nH = Math.max(15, nH);
+          setAlignmentGuides(snap.guides);
+        } else {
+          setAlignmentGuides([]);
         }
         if (resize.kind === "table") {
           setTables(ts => ts.map(t => t.id === resize.id ? {
@@ -488,11 +636,16 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
         const cur = Math.atan2(p.y - rotate.cy, p.x - rotate.cx) * 180 / Math.PI;
         let nextR = rotate.baseRotation + (cur - rotate.startAngle);
         if (!e.shiftKey) nextR = snapAngle(nextR);
-        if (rotate.kind === "table") {
-          setTables(ts => ts.map(t => t.id === rotate.id ? { ...t, rotation: nextR } : t));
-        } else {
-          setObjects(os => os.map(o => o.id === rotate.id ? { ...o, rotation: nextR } : o));
+        const deltaR = nextR - rotate.baseRotation;
+        const tableRots = new Map();
+        const objectRots = new Map();
+        for (const s of rotate.items || [{ kind: rotate.kind, id: rotate.id, startRotation: rotate.baseRotation }]) {
+          const next = s.startRotation + deltaR;
+          if (s.kind === "table") tableRots.set(s.id, next);
+          else objectRots.set(s.id, next);
         }
+        if (tableRots.size) setTables(ts => ts.map(t => tableRots.has(t.id) ? { ...t, rotation: tableRots.get(t.id) } : t));
+        if (objectRots.size) setObjects(os => os.map(o => objectRots.has(o.id) ? { ...o, rotation: objectRots.get(o.id) } : o));
       } else if (panning) {
         setPan({ x: panning.px + (e.clientX - panning.sx) / zoom, y: panning.py + (e.clientY - panning.sy) / zoom });
       }
@@ -501,17 +654,20 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     const onUp = async () => {
       try {
         if (drag) {
-          const { kind, id, current } = drag;
-          if (kind === "table") await apiClient.patch(`/tables/${id}`, { canvasX: current.x, canvasY: current.y });
-          else {
-            // doors auto-snap to nearest ballroom wall on release
-            const obj = objects.find(o => o.id === id);
-            if (obj && obj.objectType === "door") {
-              const snapped = snapDoorToWall({ ...obj, x: current.x, y: current.y }, canvasW, canvasH);
-              setObjects(os => os.map(o => o.id === id ? { ...o, ...snapped } : o));
-              await apiClient.patch(`/canvas-objects/${id}`, { x: snapped.x, y: snapped.y, rotation: snapped.rotation });
+          for (const item of drag.items) {
+            if (item.kind === "table") {
+              const t = tables.find(x => x.id === item.id);
+              if (t) await apiClient.patch(`/tables/${item.id}`, { canvasX: t.canvasX, canvasY: t.canvasY });
             } else {
-              await apiClient.patch(`/canvas-objects/${id}`, { x: current.x, y: current.y });
+              // doors auto-snap to nearest ballroom wall on release
+              const obj = objects.find(o => o.id === item.id);
+              if (obj && obj.objectType === "door") {
+                const snapped = snapDoorToWall(obj, canvasW, canvasH);
+                setObjects(os => os.map(o => o.id === item.id ? { ...o, ...snapped } : o));
+                await apiClient.patch(`/canvas-objects/${item.id}`, { x: snapped.x, y: snapped.y, rotation: snapped.rotation });
+              } else if (obj) {
+                await apiClient.patch(`/canvas-objects/${item.id}`, { x: obj.x, y: obj.y });
+              }
             }
           }
         } else if (resize) {
@@ -529,24 +685,25 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
             });
           }
         } else if (rotate) {
-          const id = rotate.id;
-          if (rotate.kind === "table") {
-            const t = tables.find(x => x.id === id);
-            if (t) await apiClient.patch(`/tables/${id}`, { rotation: t.rotation });
-          } else {
-            const o = objects.find(x => x.id === id);
-            if (o) await apiClient.patch(`/canvas-objects/${id}`, { rotation: o.rotation });
+          for (const item of rotate.items || [{ kind: rotate.kind, id: rotate.id }]) {
+            if (item.kind === "table") {
+              const t = tables.find(x => x.id === item.id);
+              if (t) await apiClient.patch(`/tables/${item.id}`, { rotation: t.rotation });
+            } else {
+              const o = objects.find(x => x.id === item.id);
+              if (o) await apiClient.patch(`/canvas-objects/${item.id}`, { rotation: o.rotation });
+            }
           }
         }
       } catch (err) { console.error(err); }
-      setDrag(null); setResize(null); setRotate(null); setPanning(null);
+      setDrag(null); setResize(null); setRotate(null); setPanning(null); setAlignmentGuides([]);
     };
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
     // Bulletproof: any blur / tab switch / Escape also clears stuck drag state.
-    const onBlur = () => { setDrag(null); setResize(null); setRotate(null); setPanning(null); };
+    const onBlur = () => { setDrag(null); setResize(null); setRotate(null); setPanning(null); setAlignmentGuides([]); };
     const onVis = () => { if (document.hidden) onBlur(); };
     const onEsc = (e) => { if (e.key === "Escape") onBlur(); };
     window.addEventListener("blur", onBlur);
@@ -560,24 +717,16 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("keydown", onEsc);
     };
-  }, [drag, resize, rotate, panning, snapOn, gridPx, zoom, pxPerFt, canvasW, canvasH, tables, objects]);
+  }, [drag, resize, rotate, panning, snapOn, gridPx, zoom, pxPerFt, canvasW, canvasH, tables, objects, alignmentTargets]);
 
-  // ─── Add from palette (drop point in canvas coords if provided) ──────────
-  const addFromPalette = async (item, dropPoint = null) => {
+  // ─── Add from palette at the cursor drop point ───────────────────────────
+  const addFromPalette = async (item, dropPoint) => {
     if (!isAdmin) return;
+    if (!dropPoint) return;
     const wPx = inToPx(item.widthIn,  pxPerFt);
     const hPx = inToPx(item.lengthIn, pxPerFt);
-    let topLeft;
-    if (dropPoint) {
-      topLeft = { x: snapVal(dropPoint.x - wPx / 2, gridPx, snapOn),
-                  y: snapVal(dropPoint.y - hPx / 2, gridPx, snapOn) };
-    } else {
-      const r = svgRef.current.getBoundingClientRect();
-      const cx = -pan.x + r.width  / (2 * zoom);
-      const cy = -pan.y + r.height / (2 * zoom);
-      topLeft = { x: snapVal(cx - wPx / 2, gridPx, snapOn),
-                  y: snapVal(cy - hPx / 2, gridPx, snapOn) };
-    }
+    const topLeft = { x: snapVal(dropPoint.x - wPx / 2, gridPx, snapOn),
+                      y: snapVal(dropPoint.y - hPx / 2, gridPx, snapOn) };
     const center = topLeft;
     if (item.isTable) {
       const next = Math.max(0, ...tables.map(t => t.tableNumber || 0)) + 1;
@@ -893,9 +1042,8 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
                           e.dataTransfer.effectAllowed = "copy";
                           e.dataTransfer.setData("application/json", JSON.stringify(p));
                         }}
-                        onClick={() => addFromPalette(p)}
                         data-testid={`palette-${p.paletteKey || p.type}`}
-                        title={`${p.label} — drag onto canvas, or click to drop at center`}
+                        title={`${p.label} — drag onto the canvas and release where it should go`}
                         className="bg-white border border-stone-300 hover:border-stone-900 hover:bg-stone-50 rounded p-2 text-xs flex flex-col items-center gap-1 overflow-hidden cursor-grab active:cursor-grabbing">
                         <Icon className="h-4 w-4 text-stone-700 shrink-0" />
                         <span className="text-[10px] text-stone-700 leading-tight text-center truncate w-full">{p.label}</span>
@@ -905,7 +1053,7 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
                 </div>
               </div>
             ))}
-          <p className="text-[10px] text-stone-500 mt-3 px-1">Tables come from your <b>Table Inventory</b>. <b>Drag</b> any palette item onto the canvas to drop it where you release, or click to drop at center.</p>
+          <p className="text-[10px] text-stone-500 mt-3 px-1">Tables come from your <b>Table Inventory</b>. <b>Drag</b> any palette item onto the canvas and release exactly where it should go.</p>
           </div>
         )}
         {!showPalette && isAdmin && (
@@ -1016,6 +1164,8 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
                   onRemove={() => removeObject(o.id)} pxPerFt={pxPerFt} />
               ))}
 
+              <AlignmentGuides guides={alignmentGuides} canvasW={canvasW} canvasH={canvasH} />
+
               {/* Calibration overlay — captures all clicks during calibration so
                   the user can hit any point (including over the floor-plan image or objects). */}
               {(calibration.step === "awaiting-p1" || calibration.step === "awaiting-p2") && (
@@ -1115,6 +1265,21 @@ function DimensionLabels({ w, h, widthFt, heightFt }) {
           {formatLen((heightFt || 0) * 12)}
         </text>
       </g>
+    </g>
+  );
+}
+
+function AlignmentGuides({ guides, canvasW, canvasH }) {
+  if (!guides?.length) return null;
+  return (
+    <g pointerEvents="none" data-testid="alignment-guides">
+      {guides.map((g, i) => g.axis === "x" ? (
+        <line key={`gx-${i}`} x1={g.value} y1={-120} x2={g.value} y2={canvasH + 120}
+              stroke="#38bdf8" strokeWidth="1.5" strokeDasharray="6 4" />
+      ) : (
+        <line key={`gy-${i}`} x1={-120} y1={g.value} x2={canvasW + 120} y2={g.value}
+              stroke="#38bdf8" strokeWidth="1.5" strokeDasharray="6 4" />
+      ))}
     </g>
   );
 }

@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-07-05 — Phase 4 completion polish
+
+### Completed
+- Removed palette click-to-center placement entirely. Palette items are now created only by dragging onto the canvas, and the help text/tooltips match that behavior.
+- Added smart alignment guides during drag and resize. Objects/tables snap to nearby left/center/right and top/middle/bottom alignments against other canvas items and the room boundary.
+- Hardened Ctrl/Cmd multi-select movement and rotation so selected tables/objects transform together and each changed item persists back to Supabase on release.
+
+### Verification notes
+- Frontend dependency install requires `--legacy-peer-deps` because the existing package set has a `date-fns@4.1.0` / `react-day-picker@8.10.1` peer conflict.
+- `corepack yarn build` completed successfully. CRA reported existing hook dependency warnings in `BallroomCanvas.jsx` and `Dashboard.jsx`.
+- Backend Phase 4/6 pytest suites could not run against app logic because their configured preview API endpoints returned `404 page not found` at login/dev-login setup.
+
+---
+
 ## 2026-06-11 (continued) — Canvas navigation + bug fixes
 
 ### Completed

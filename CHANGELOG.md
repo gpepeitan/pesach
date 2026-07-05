@@ -5,6 +5,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Phase 4 Completion Polish] — 2026-07-05
+
+### Added
+- Smart canvas alignment guides for drag and resize interactions. Tables and objects now snap to nearby edge and midpoint alignments against other placed items and the room boundary.
+- Ctrl/Cmd multi-selected tables and objects now move/rotate together as a group and persist each changed item.
+
+### Changed
+- Palette placement is drag-only. The prior click-to-center fallback and staff-facing copy were removed so objects drop exactly where released.
+
+---
+
 ## [Phase 6 — Canvas UX & Ops Polish] — 2026-02
 
 ### Added
