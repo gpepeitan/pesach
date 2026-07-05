@@ -2065,9 +2065,19 @@ async def activity_log(
 # ---------- STARTUP ----------
 app.include_router(api)
 
+cors_origins_raw = os.environ.get("CORS_ORIGINS", "*")
+cors_origins = [
+    origin.strip()
+    for origin in cors_origins_raw.split(",")
+    if origin.strip()
+]
+if not cors_origins:
+    cors_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=False,
+    allow_origins=cors_origins,
+    allow_credentials=False,
     allow_methods=["*"], allow_headers=["*"],
 )
 

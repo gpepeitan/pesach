@@ -5,6 +5,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+## [Public Deployment Setup] — 2026-07-05
+
+### Added
+- Render Blueprint config for the FastAPI backend (`render.yaml`) with free web service settings and required secret placeholders.
+- Vercel SPA rewrite config for the React frontend (`frontend/vercel.json`).
+- Backend and frontend `.env.example` files for public deployment.
+- `DEPLOYMENT.md` with step-by-step Render, Vercel, Supabase, and CORS setup.
+
+### Changed
+- Backend CORS can now be restricted with `CORS_ORIGINS` instead of always allowing every origin.
+
+---
+
 ## [Phase 4 Completion Polish] — 2026-07-05
 
 ### Added

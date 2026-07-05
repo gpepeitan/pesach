@@ -13,6 +13,8 @@ A web app for managing seating at a large-scale Passover hotel program (1,000+ g
 
 ## Setup
 
+For public free hosting, see [`DEPLOYMENT.md`](./DEPLOYMENT.md).
+
 ### 1. Database (Supabase)
 1. Create a free project at [supabase.com](https://supabase.com)
 2. Click the green **Connect** button at the top of the dashboard

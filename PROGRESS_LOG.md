@@ -4,6 +4,21 @@
 
 ---
 
+## 2026-07-05 — Free public deployment setup
+
+### Completed
+- Added Render Blueprint deployment config for the backend API with free plan settings, health check, and required production environment variables.
+- Added Vercel SPA routing config for the frontend.
+- Added backend/frontend environment examples for Supabase, JWT/admin credentials, backend URL, and public CORS.
+- Added `DEPLOYMENT.md` and linked it from the README so the remaining account-side setup is explicit.
+- Changed backend CORS to read `CORS_ORIGINS`, allowing the public API to be locked to the deployed Vercel URL.
+
+### Notes
+- I cannot create the actual Render/Vercel projects from this environment without your account sessions and secret values.
+- Keep `DEV_AUTH_BYPASS=0` for any public deployment.
+
+---
+
 ## 2026-07-05 — Phase 4 completion polish
 
 ### Completed
