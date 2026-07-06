@@ -1673,6 +1673,12 @@ async def move_family(body: FamilyMoveBody, user: dict = Depends(get_current_use
                 last_updated_timestamp=NOW()
             WHERE id = ANY(:ids)
         """), {"t": body.targetTableId, "b": t["ballroom_id"], "ids": member_ids})
+        await db.execute(text("DELETE FROM seat_assignments WHERE guest_id = ANY(:ids)"), {"ids": member_ids})
+        for member_id in member_ids:
+            await db.execute(text("""
+                INSERT INTO seat_assignments (guest_id, table_id, assigned_by_session)
+                VALUES (:g, :t, :s)
+            """), {"g": member_id, "t": body.targetTableId, "s": user["display_name"]})
     else:
         member_ids = [m["id"] for m in members]
         await db.execute(text("""
@@ -1680,6 +1686,7 @@ async def move_family(body: FamilyMoveBody, user: dict = Depends(get_current_use
                 last_updated_timestamp=NOW()
             WHERE id = ANY(:ids)
         """), {"ids": member_ids})
+        await db.execute(text("DELETE FROM seat_assignments WHERE guest_id = ANY(:ids)"), {"ids": member_ids})
 
     await log_activity(db, user, "family_move", guest_id=body.guestId,
                        table_id=body.targetTableId,

@@ -254,11 +254,12 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   const [selectionSet, setSelectionSet] = useState([]); // [{kind, id}, ...] for multi-select
   const [conflicts, setConflicts] = useState({});       // { [tableId]: [conflict, ...] }
   const [historyStack, setHistoryStack] = useState({ undoAvailable: 0, redoAvailable: 0 });
-  const [showGuestPanel, setShowGuestPanel] = useState(false);
+  const [showGuestPanel, setShowGuestPanel] = useState(true);
   const [showPalette, setShowPalette] = useState(typeof window !== "undefined" && window.innerWidth >= 640);
   const [showPanel, setShowPanel] = useState(true);
   const [savingFp, setSavingFp] = useState(false);
   const [calibration, setCalibration] = useState({ step: "idle", p1: null, p2: null });
+  const [guestReloadKey, setGuestReloadKey] = useState(0);
 
   const svgRef = useRef(null);
   const fileRef = useRef(null);
@@ -358,6 +359,8 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   const onObjectPointerDown = (e, kind, item) => {
     if (!isAdmin) return;
     e.stopPropagation();
+    try { e.currentTarget?.setPointerCapture?.(e.pointerId); } catch (err) { /* best effort */ }
+    if (kind === "table") setShowGuestPanel(true);
     if (e.ctrlKey || e.metaKey) {
       // Ctrl/Cmd+Click → toggle in multi-select set
       setSelectionSet((prev) => {
@@ -437,17 +440,20 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     if (targets.length === 0) return;
     const ok = window.confirm(`Delete ${targets.length} item(s)?`);
     if (!ok) return;
+    const failures = [];
     for (const s of targets) {
       try {
         if (s.kind === "table") await apiClient.delete(`/tables/${s.id}`);
         else if (s.kind === "object") await apiClient.delete(`/canvas-objects/${s.id}`);
       } catch (err) {
         const msg = err?.response?.data?.detail || "delete failed";
+        failures.push(msg);
         console.warn("Delete", s, msg);
       }
     }
     setSelection(null); setSelectionSet([]);
     await load();
+    if (failures.length) alert(`Some items could not be deleted:\n${failures.join("\n")}`);
   }, [isAdmin, selection, selectionSet, load]);
 
   // Global shortcuts: Delete/Backspace, Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z
@@ -652,15 +658,21 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     };
 
     const onUp = async () => {
+      const activeDrag = drag;
+      const activeResize = resize;
+      const activeRotate = rotate;
+      const tablesAtRelease = tables;
+      const objectsAtRelease = objects;
+      setDrag(null); setResize(null); setRotate(null); setPanning(null); setAlignmentGuides([]);
       try {
-        if (drag) {
-          for (const item of drag.items) {
+        if (activeDrag) {
+          for (const item of activeDrag.items) {
             if (item.kind === "table") {
-              const t = tables.find(x => x.id === item.id);
+              const t = tablesAtRelease.find(x => x.id === item.id);
               if (t) await apiClient.patch(`/tables/${item.id}`, { canvasX: t.canvasX, canvasY: t.canvasY });
             } else {
               // doors auto-snap to nearest ballroom wall on release
-              const obj = objects.find(o => o.id === item.id);
+              const obj = objectsAtRelease.find(o => o.id === item.id);
               if (obj && obj.objectType === "door") {
                 const snapped = snapDoorToWall(obj, canvasW, canvasH);
                 setObjects(os => os.map(o => o.id === item.id ? { ...o, ...snapped } : o));
@@ -670,33 +682,32 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
               }
             }
           }
-        } else if (resize) {
-          const id = resize.id;
-          if (resize.kind === "table") {
-            const t = tables.find(x => x.id === id);
+        } else if (activeResize) {
+          const id = activeResize.id;
+          if (activeResize.kind === "table") {
+            const t = tablesAtRelease.find(x => x.id === id);
             if (t) await apiClient.patch(`/tables/${id}`, {
               canvasX: t.canvasX, canvasY: t.canvasY,
               widthIn: t.widthIn, lengthIn: t.lengthIn,
             });
           } else {
-            const o = objects.find(x => x.id === id);
+            const o = objectsAtRelease.find(x => x.id === id);
             if (o) await apiClient.patch(`/canvas-objects/${id}`, {
               x: o.x, y: o.y, width: o.width, height: o.height,
             });
           }
-        } else if (rotate) {
-          for (const item of rotate.items || [{ kind: rotate.kind, id: rotate.id }]) {
+        } else if (activeRotate) {
+          for (const item of activeRotate.items || [{ kind: activeRotate.kind, id: activeRotate.id }]) {
             if (item.kind === "table") {
-              const t = tables.find(x => x.id === item.id);
+              const t = tablesAtRelease.find(x => x.id === item.id);
               if (t) await apiClient.patch(`/tables/${item.id}`, { rotation: t.rotation });
             } else {
-              const o = objects.find(x => x.id === item.id);
+              const o = objectsAtRelease.find(x => x.id === item.id);
               if (o) await apiClient.patch(`/canvas-objects/${item.id}`, { rotation: o.rotation });
             }
           }
         }
       } catch (err) { console.error(err); }
-      setDrag(null); setResize(null); setRotate(null); setPanning(null); setAlignmentGuides([]);
     };
 
     window.addEventListener("pointermove", onMove);
@@ -794,11 +805,28 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
     try {
       await apiClient.post("/guests/family/move", { guestId, targetTableId: tableId });
       await load();
+      setGuestReloadKey(k => k + 1);
     } catch (e) {
       const d = e?.response?.data?.detail;
       alert(typeof d === "object" ? d.message : (d || "Failed to seat family"));
     }
   };
+
+  const moveFamily = async (guestId, targetTableId) => {
+    try {
+      await apiClient.post("/guests/family/move", { guestId, targetTableId });
+      await load();
+      setGuestReloadKey(k => k + 1);
+    } catch (e) {
+      const d = e?.response?.data?.detail;
+      alert(typeof d === "object" ? d.message : (d || "Failed to move family"));
+    }
+  };
+
+  const selectedTable = useMemo(() => {
+    if (selection?.kind !== "table") return null;
+    return tables.find(t => t.id === selection.id) || null;
+  }, [selection, tables]);
 
   // ─── PDF export: clean floor plan + master seating list ──────────────────
   const exportCanvasPdf = useCallback(async () => {
@@ -875,20 +903,75 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
   }, [exportCanvasPdf]);
 
   // ─── Floor plan: upload (image or PDF) ───────────────────────────────────
+  const rebuildPdfWithCanvasObjects = async (file) => {
+    const buf = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: buf.slice(0) }).promise;
+    const page = await pdf.getPage(1);
+    const viewport = page.getViewport({ scale: 1 });
+    const fit = Math.min(canvasW / viewport.width, canvasH / viewport.height);
+    const ox = (canvasW - viewport.width * fit) / 2;
+    const oy = (canvasH - viewport.height * fit) / 2;
+    const created = [];
+    const toCanvasPoint = (x, y) => {
+      const [vx, vy] = viewport.convertToViewportPoint(x, y);
+      return { x: ox + vx * fit, y: oy + vy * fit };
+    };
+
+    const text = await page.getTextContent();
+    for (const item of text.items || []) {
+      const value = (item.str || "").trim();
+      if (!value || value.length < 2) continue;
+      const tx = item.transform?.[4] || 0;
+      const ty = item.transform?.[5] || 0;
+      const p = toCanvasPoint(tx, ty);
+      const fontSize = Math.max(8, Math.min(24, (item.height || 10) * fit));
+      created.push({
+        ballroomId: ballroom.id,
+        objectType: "text",
+        label: value.slice(0, 80),
+        x: p.x,
+        y: p.y - fontSize,
+        width: Math.max(36, Math.min(canvasW / 2, (item.width || value.length * 6) * fit)),
+        height: Math.max(16, fontSize * 1.6),
+        rotation: 0,
+        properties: { fontSize, textContent: value, source: "pdf-import" },
+      });
+      if (created.length >= 120) break;
+    }
+
+    const vectors = await extractPdfVectorObjects(page, viewport, fit, ox, oy).catch(() => []);
+    created.push(...vectors.slice(0, Math.max(0, 160 - created.length)).map(v => ({
+      ballroomId: ballroom.id,
+      ...v,
+      properties: { source: "pdf-import", ...(v.properties || {}) },
+    })));
+
+    for (const obj of created) {
+      await apiClient.post("/canvas-objects", obj);
+    }
+    return created.length;
+  };
+
   const uploadFloorPlan = async (file) => {
     if (!file) return;
     if (file.size > 12 * 1024 * 1024) { alert("File too large. Use < 12MB."); return; }
     setSavingFp(true);
     try {
       let dataUrl = null;
+      let rebuilt = 0;
       if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
         dataUrl = await pdfFirstPageToDataUrl(file);
+        rebuilt = await rebuildPdfWithCanvasObjects(file);
       } else {
         dataUrl = await fileToDataUrl(file);
       }
       await apiClient.patch(`/ballrooms/${ballroom.id}/floor-plan`, { backgroundImageUrl: dataUrl });
       setBallroom(b => ({ ...b, backgroundImageUrl: dataUrl, bgVisible: true }));
       await apiClient.patch(`/ballrooms/${ballroom.id}/canvas-settings`, { bgVisible: true });
+      if (rebuilt) {
+        await load();
+        alert(`PDF imported as a reference image and rebuilt into ${rebuilt} editable canvas item(s).`);
+      }
     } catch (e) {
       alert(e?.response?.data?.detail || e.message || "Upload failed");
     } finally {
@@ -1206,6 +1289,9 @@ export default function BallroomCanvas({ ballroom: initialBallroom, onClose, onO
               ballroomId={ballroom.id}
               tables={tables}
               conflicts={conflicts}
+              selectedTable={selectedTable}
+              reloadKey={guestReloadKey}
+              onMoveFamily={moveFamily}
               onClose={() => setShowGuestPanel(false)}
             />
           )}
@@ -1751,9 +1837,62 @@ async function pdfFirstPageToDataUrl(file) {
   return canvas.toDataURL("image/png");
 }
 
+async function extractPdfVectorObjects(page, viewport, fit, ox, oy) {
+  const out = [];
+  const ops = pdfjsLib.OPS || {};
+  const opList = await page.getOperatorList();
+  const toCanvasPoint = (x, y) => {
+    const [vx, vy] = viewport.convertToViewportPoint(x, y);
+    return { x: ox + vx * fit, y: oy + vy * fit };
+  };
+  const addLine = (a, b) => {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (!Number.isFinite(len) || len < 16) return;
+    out.push({
+      objectType: "line",
+      label: null,
+      x: a.x,
+      y: a.y - 1.5,
+      width: len,
+      height: 3,
+      rotation: Math.atan2(dy, dx) * 180 / Math.PI,
+    });
+  };
+
+  for (let i = 0; i < opList.fnArray.length; i++) {
+    if (opList.fnArray[i] !== ops.constructPath) continue;
+    const [pathOps = [], coords = []] = opList.argsArray[i] || [];
+    let ci = 0;
+    let cursor = null;
+    for (const pOp of pathOps) {
+      if (pOp === ops.moveTo) {
+        cursor = toCanvasPoint(coords[ci], coords[ci + 1]);
+        ci += 2;
+      } else if (pOp === ops.lineTo) {
+        const next = toCanvasPoint(coords[ci], coords[ci + 1]);
+        ci += 2;
+        if (cursor) addLine(cursor, next);
+        cursor = next;
+      } else if (pOp === ops.rectangle) {
+        const x = coords[ci], y = coords[ci + 1], w = coords[ci + 2], h = coords[ci + 3];
+        ci += 4;
+        const p1 = toCanvasPoint(x, y);
+        const p2 = toCanvasPoint(x + w, y);
+        const p3 = toCanvasPoint(x + w, y + h);
+        const p4 = toCanvasPoint(x, y + h);
+        addLine(p1, p2); addLine(p2, p3); addLine(p3, p4); addLine(p4, p1);
+      }
+      if (out.length >= 80) return out;
+    }
+  }
+  return out;
+}
+
 
 // ─── Canvas Guest Panel (floating, draggable families onto tables) ────────────
-function CanvasGuestPanel({ ballroomId, tables, conflicts, onClose }) {
+function CanvasGuestPanel({ ballroomId, tables, conflicts, selectedTable, reloadKey, onMoveFamily, onClose }) {
   const [guests, setGuests] = useState([]);
   const [q, setQ] = useState("");
 
@@ -1763,7 +1902,7 @@ function CanvasGuestPanel({ ballroomId, tables, conflicts, onClose }) {
       setGuests(r.data);
     } catch (e) { /* ignore */ }
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { load(); }, [load, reloadKey]);
 
   const tableNumFor = (g) => {
     if (!g.tableId) return null;
@@ -1801,18 +1940,58 @@ function CanvasGuestPanel({ ballroomId, tables, conflicts, onClose }) {
     return "bg-emerald-200 text-emerald-900";
   };
 
+  const selectedFamilies = selectedTable
+    ? families.filter(fam => fam.members.some(m => m.tableId === selectedTable.id))
+    : [];
+  const familyLabel = (fam) => fam.familyId ? `Family ${fam.familyId}` : fam.anchor.fullName;
+  const move = async (guestId, tableId) => {
+    await onMoveFamily?.(guestId, tableId);
+    await load();
+  };
+
   return (
-    <div className="absolute inset-2 sm:inset-auto sm:top-3 sm:right-3 sm:w-80 sm:max-h-[80vh] bg-white rounded-xl shadow-2xl border border-stone-200 overflow-hidden flex flex-col z-30"
+    <div className="absolute inset-y-0 right-0 w-full sm:w-96 max-w-full bg-white shadow-2xl border-l border-stone-200 overflow-hidden flex flex-col z-30"
          data-testid="canvas-guest-panel">
       <div className="px-3 py-2 bg-stone-900 text-white flex items-center justify-between">
         <div className="font-medium flex items-center gap-2">
-          <Users className="h-4 w-4" /> Guest List
+          <Users className="h-4 w-4" /> Families
           <span className="text-xs text-stone-400">({guests.length})</span>
         </div>
         <button onClick={onClose} className="hover:bg-stone-700 p-1 rounded" data-testid="close-guest-panel">
           <XIcon className="h-4 w-4" />
         </button>
       </div>
+      {selectedTable && (
+        <div className="border-b border-amber-200 bg-amber-50 p-3" data-testid="selected-table-families">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-semibold text-amber-950">Table {selectedTable.tableNumber}</div>
+              <div className="text-xs text-amber-800">{selectedTable.seatsTaken}/{selectedTable.maxCapacity} seats filled</div>
+            </div>
+            <span className="text-[10px] uppercase tracking-wide text-amber-800">Selected</span>
+          </div>
+          <div className="mt-2 space-y-1.5">
+            {selectedFamilies.length === 0 ? (
+              <div className="text-xs text-amber-800">No families assigned yet. Use Seat here below or drag a family onto this table.</div>
+            ) : selectedFamilies.map(fam => (
+              <div key={`sel-${fam.familyId || fam.anchor.id}`} className="rounded border border-amber-200 bg-white px-2 py-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-stone-900 truncate">{familyLabel(fam)}</div>
+                    <div className="text-[11px] text-stone-500">{fam.total} people - {fam.members.map(m => m.fullName).join(", ")}</div>
+                  </div>
+                  <button
+                    onClick={() => move(fam.anchor.id, null)}
+                    className="text-[11px] text-red-700 hover:text-red-900 shrink-0"
+                    data-testid={`unseat-family-${fam.anchor.id}`}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="p-2 border-b border-stone-200">
         <input value={q} onChange={(e) => setQ(e.target.value)}
           placeholder="Search name, family, invoice…"
@@ -1857,6 +2036,22 @@ function CanvasGuestPanel({ ballroomId, tables, conflicts, onClose }) {
                   )}
                 </div>
               </div>
+              {selectedTable && fam.anchor.tableId !== selectedTable.id && (
+                <button
+                  onClick={() => move(fam.anchor.id, selectedTable.id)}
+                  className="mt-2 w-full rounded bg-stone-900 px-2 py-1 text-xs font-medium text-white hover:bg-stone-800"
+                  data-testid={`seat-family-${fam.anchor.id}`}>
+                  Seat here at Table {selectedTable.tableNumber}
+                </button>
+              )}
+              {selectedTable && fam.anchor.tableId === selectedTable.id && (
+                <button
+                  onClick={() => move(fam.anchor.id, null)}
+                  className="mt-2 w-full rounded border border-red-200 px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+                  data-testid={`remove-family-${fam.anchor.id}`}>
+                  Remove from this table
+                </button>
+              )}
               {fam.anchor.seatingPreferences?.length > 0 && (
                 <div className="text-[10px] text-stone-500 mt-1">
                   wants: {fam.anchor.seatingPreferences.join(", ")}
